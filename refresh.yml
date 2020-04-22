@@ -1,0 +1,11 @@
+# https://github.com/markbates/refresh
+app_root: .
+ignored_folders:
+- work
+included_extensions:
+- .go
+build_path: work
+build_delay: 200ms
+binary_name: paralellefs
+enable_colors: true
+command_flags: ["--socket", "work/run.sock"]

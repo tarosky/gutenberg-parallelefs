@@ -2,7 +2,7 @@ steps:
 - name: tarosky/gcbseq:latest
   args:
   - -n
-  - cloudbuild-gutenberg
+  - cloudbuild-gutenberg-parallelefs
   - -o
   - work/BUILD_NUMBER
   - -i

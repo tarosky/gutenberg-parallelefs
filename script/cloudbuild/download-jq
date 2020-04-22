@@ -11,8 +11,7 @@ if [[ -e work/cache/jq ]]; then
   fi
 fi
 
-curl --fail -L -s \
-  -o work/cache/jq \
+curl -fsSL -o work/cache/jq \
   "https://github.com/stedolan/jq/releases/download/jq-$version/jq-linux64"
 chmod +x work/cache/jq
 

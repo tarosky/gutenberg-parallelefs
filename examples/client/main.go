@@ -28,7 +28,6 @@ func main() {
 		},
 		Action: func(c *cli.Context) error {
 			socket := c.Path("socket")
-			// fmt.Printf("Hello %s", socketPath)
 			connect(socket)
 			return nil
 		},

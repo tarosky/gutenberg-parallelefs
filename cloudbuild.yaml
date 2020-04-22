@@ -1,0 +1,118 @@
+steps:
+- name: tarosky/gcbseq:latest
+  args:
+  - -n
+  - cloudbuild-gutenberg
+  - -o
+  - work/BUILD_NUMBER
+  - -i
+  - '1'
+  env:
+  - PROJECT_ID=$PROJECT_ID
+
+- name: gcr.io/cloud-builders/curl
+  entrypoint: bash
+  args:
+  - -c
+  - script/cloudbuild/download-jq
+
+- name: gcr.io/cloud-builders/gcloud
+  # Decrypt GitHub token
+  entrypoint: bash
+  args:
+  - -c
+  - |
+    set -eu
+    base64 -d <<< "$_ENCRYPTED_GITHUB_TOKEN" | gcloud kms decrypt \
+      --ciphertext-file=- \
+      --plaintext-file="work/github-token.txt" \
+      --location=global \
+      --keyring=cloudbuild \
+      --key=github_token
+
+- name: golang:1.14
+  dir: src
+  args:
+  - go
+  - build
+  - -o
+  - work/parallelefs
+  env:
+  - GO111MODULE=on
+
+- name: gcr.io/cloud-builders/curl
+  # Generate version
+  entrypoint: bash
+  args:
+  - -c
+  - |
+    set -eu
+
+    vcurl () {
+      local tmp
+      local code
+
+      tmp="$(mktemp)"
+      code="$(curl -sSLD /dev/stderr -w '%{http_code}' -o "$tmp" "$@")"
+      cat "$tmp"
+      rm "$tmp"
+
+      if [ 200 -le "$code" ] && [ "$code" -lt 300 ]; then
+        return 0
+      fi
+      echo "failed: status code: $code"
+
+      return 204
+    }
+
+    export -f vcurl
+
+    if [ "$BRANCH_NAME" = "$_MAIN_BRANCH" ]; then
+      build_url='https://console.cloud.google.com/cloud-build/builds/$BUILD_ID?project=$PROJECT_ID'
+      build_num="$(< work/BUILD_NUMBER)"
+
+      body="$(cat <<EOF
+    [Google Cloud Build]($build_url)
+    EOF
+      )"
+
+      json="$(work/cache/jq -n \
+        --arg tag "build-$build_num" \
+        --arg commit "$COMMIT_SHA" \
+        --arg name "Build $build_num" \
+        --arg body "$body" \
+        '{tag_name: $tag, target_commitish: $commit, name: $name, body: $body}')"
+
+      echo "$json"
+
+      vcurl --user "$_GITHUB_USER:$(< work/github-token.txt)" \
+        -H "Content-Type: application/json" -X POST -d "$json" "$_GITHUB_API/releases" | tee work/release.json
+
+      release_id="$(work/cache/jq '.id' work/release.json)"
+      export release_id
+
+      vcurl \
+        --user "$_GITHUB_USER:$(< work/github-token.txt)" \
+        -H "Content-Type: application/json" -X POST --data-binary @work/parallelefs \
+        "$_GITHUB_UPLOADS/releases/$release_id/assets?name=parallelefs"
+    fi
+  env:
+  - AWS_DEFAULT_REGION=ap-northeast-1
+
+substitutions:
+  # _ENCRYPTED_GITHUB_TOKEN was generated using the following command:
+  #
+  # gcloud kms encrypt \
+  #  --plaintext-file=github-token.txt \
+  #  --ciphertext-file=- \
+  #  --location=global \
+  #  --keyring=cloudbuild \
+  #  --key=github_token | base64 -w 0
+  _ENCRYPTED_GITHUB_TOKEN: CiQAXggxFtqKUL8rS3z7QaqmAw+t5+1braaP09tTjFQg+ysJwkkSUQClibR/xVhEoki9ZuJEtW7F0N1O8MeCHY5d0sNlgot/UeqGfI2oYtSkFFo82FldRzyb7SXuEBD3bKZQCozt1kmtq/EsROhvLfsO6Jg4r+/uiA==
+
+  _GITHUB_USER: taroskybot
+  _GITHUB_API: https://api.github.com/repos/tarosky/gutenberg-parallelefs
+  _GITHUB_UPLOADS: https://uploads.github.com/repos/tarosky/gutenberg-parallelefs
+  _GITHUB_RELEASES: https://github.com/tarosky/gutenberg-parallelefs/releases
+  # _MAIN_BRANCH: master
+  _MAIN_BRANCH: dev/harai

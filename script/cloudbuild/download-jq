@@ -1,0 +1,18 @@
+#!/bin/bash
+
+set -eu
+
+version=1.6
+
+if [[ -e work/cache/jq ]]; then
+  if [[ "$(work/cache/jq --version | cut -d- -f2)" = "$version" ]]; then
+    >&2 echo "jq $version already exists."
+    exit 0
+  fi
+fi
+
+curl -fsSL -o work/cache/jq \
+  "https://github.com/stedolan/jq/releases/download/jq-$version/jq-linux64"
+chmod +x work/cache/jq
+
+>&2 echo "Downloaded jq $version."

@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"fmt"
 	"net"
 	"os"
 	"os/signal"
@@ -58,11 +57,7 @@ func listen(socket string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func() {
-		if err := listener.Close(); err != nil {
-			log.Error(err)
-		}
-	}()
+	defer listener.Close()
 
 	go func() {
 		for {
@@ -84,14 +79,24 @@ func listen(socket string) {
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
+	sess := newSession()
+
 	recv := bufio.NewScanner(conn)
 	for recv.Scan() {
-		msg := string(recv.Bytes())
+		msg := recv.Bytes()
 
-		if msg == "exit" {
+		if len(msg) == 0 {
+			sess.finalize()
+			conn.Write([]byte("true\n"))
 			return
 		}
 
-		fmt.Println("res> " + msg)
+		if err := sess.addWriteTask(msg); err != nil {
+			log.Error(err)
+			conn.Write([]byte("false\n"))
+			continue
+		}
+
+		conn.Write([]byte("true\n"))
 	}
 }

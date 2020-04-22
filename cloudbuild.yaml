@@ -31,7 +31,6 @@ steps:
       --key=github_token
 
 - name: golang:1.14
-  dir: src
   args:
   - go
   - build

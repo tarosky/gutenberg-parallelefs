@@ -13,6 +13,7 @@ import (
 
 func main() {
 	log.SetLevel(log.DebugLevel)
+	log.SetOutput(os.Stderr)
 
 	app := &cli.App{
 		Name:  "parallelefs",
@@ -58,6 +59,7 @@ func listen(socket string) {
 		log.Fatal(err)
 	}
 	defer listener.Close()
+	log.Debugf("started listening")
 
 	go func() {
 		for {
@@ -80,10 +82,14 @@ func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
 	sess := newSession()
+	log.Debugf("started new session")
 
 	recv := bufio.NewScanner(conn)
 	for recv.Scan() {
 		msg := recv.Bytes()
+
+		log.Debugf("received: %d bytes", len(msg))
+		log.Debugf("content: '%s'", string(msg))
 
 		if len(msg) == 0 {
 			sess.finalize()

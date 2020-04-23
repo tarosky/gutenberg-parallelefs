@@ -7,7 +7,10 @@ import (
 	"io"
 	"os"
 
+	log "github.com/sirupsen/logrus"
+
 	"sync"
+	"time"
 )
 
 type content []byte
@@ -19,7 +22,7 @@ type writeTask struct {
 }
 
 type session struct {
-	wg *sync.WaitGroup
+	files []*os.File
 }
 
 func (c *content) UnmarshalJSON(data []byte) error {
@@ -39,11 +42,16 @@ func (c *content) UnmarshalJSON(data []byte) error {
 
 func newSession() *session {
 	return &session{
-		wg: &sync.WaitGroup{},
+		files: []*os.File{},
 	}
 }
 
 func (s *session) addWriteTask(input []byte) error {
+	start := time.Now()
+	defer func() {
+		log.Debugf("addWriteTask took %s", time.Since(start))
+	}()
+
 	var task writeTask
 	if err := json.Unmarshal(input, &task); err != nil {
 		return err
@@ -61,32 +69,70 @@ func (s *session) addWriteTask(input []byte) error {
 }
 
 func (s *session) copyFile(srcPath, destPath string) error {
+	createDest := func() (*os.File, error) {
+		start := time.Now()
+		defer func() {
+			log.Debugf("createDest took %s", time.Since(start))
+		}()
+
+		// dest, err := os.Create(destPath)
+		dest, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+		if err != nil {
+			return nil, err
+		}
+		return dest, nil
+	}
+
 	src, err := os.Open(srcPath)
 	if err != nil {
 		return err
 	}
 
-	dest, err := os.Create(destPath)
+	dest, err := createDest()
 	if err != nil {
 		return err
 	}
 
-	if _, err := io.Copy(dest, src); err != nil {
-		return err
+	buf := make([]byte, 10*1024)
+
+	readFromSrc := func() (int, error) {
+		start := time.Now()
+		defer func() {
+			log.Debugf("readFromSrc took %s", time.Since(start))
+		}()
+
+		n, err := src.Read(buf)
+		if err != nil && err != io.EOF {
+			return 0, err
+		}
+		return n, nil
 	}
 
-	s.wg.Add(1)
-	go func() {
-		if err := src.Close(); err != nil {
-			// Ignore
-		}
+	writeToDest := func(n int) error {
+		start := time.Now()
+		defer func() {
+			log.Debugf("writeToDest took %s", time.Since(start))
+		}()
 
-		if err := dest.Close(); err != nil {
-			// Ignore
+		if _, err := dest.Write(buf[:n]); err != nil {
+			return err
 		}
+		return nil
+	}
 
-		s.wg.Done()
-	}()
+	for {
+		n, err := readFromSrc()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			break
+		}
+		if err := writeToDest(n); err != nil {
+			return err
+		}
+	}
+	s.files = append(s.files, src, dest)
 
 	return nil
 }
@@ -101,18 +147,26 @@ func (s *session) createFile(content []byte, destPath string) error {
 		return err
 	}
 
-	s.wg.Add(1)
-	go func() {
-		if err := dest.Close(); err != nil {
-			// Ignore
-		}
-
-		s.wg.Done()
-	}()
+	s.files = append(s.files, dest)
 
 	return nil
 }
 
 func (s *session) finalize() {
-	s.wg.Wait()
+	start := time.Now()
+	defer func() {
+		log.Debugf("finalize took %s", time.Since(start))
+	}()
+
+	wg := &sync.WaitGroup{}
+
+	for _, f := range s.files {
+		wg.Add(1)
+		go func(f *os.File) {
+			f.Close()
+			wg.Done()
+		}(f)
+	}
+
+	wg.Wait()
 }

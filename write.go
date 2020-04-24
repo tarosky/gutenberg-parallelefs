@@ -50,6 +50,61 @@ func (c *content) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+const createFilesWorkerCount = 10
+
+func createFiles(
+	poolDir string,
+	pooledFilesCh chan<- *os.File,
+	finalizePooledFiles <-chan unit,
+) {
+	createdFileCh := make(chan *os.File)
+	quitCh := make(chan unit)
+	propagateErrorCh := make(chan unit, createFilesWorkerCount)
+
+	go func() {
+		for {
+			select {
+			case pooledFilesCh <- <-createdFileCh:
+			case <-finalizePooledFiles:
+				close(quitCh)
+				close(pooledFilesCh)
+				break
+			case <-propagateErrorCh:
+				close(quitCh)
+				close(pooledFilesCh)
+				break
+			}
+		}
+	}()
+
+	for i := 0; i < createFilesWorkerCount; i++ {
+		go func() {
+			for {
+				file, err := os.OpenFile(
+					poolDir+"/"+uuid.New().String()+".pool",
+					os.O_WRONLY|os.O_CREATE|os.O_TRUNC,
+					0666,
+				)
+
+				if err != nil {
+					log.Error(err)
+					propagateErrorCh <- unit{}
+					break
+				}
+
+				select {
+				case createdFileCh <- file:
+					continue
+				case <-quitCh:
+					file.Close()
+					os.Remove(file.Name())
+					break
+				}
+			}
+		}()
+	}
+}
+
 func newSession(poolDir string) *session {
 	pooledFilesCh := make(chan *os.File, filePoolSize)
 	finalizePooledFiles := make(chan unit)

@@ -1,15 +1,17 @@
 package main
 
 import (
-	"bufio"
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 
 	log "github.com/sirupsen/logrus"
 
 	"github.com/urfave/cli/v2"
 )
+
+type unit struct{}
 
 func main() {
 	log.SetLevel(log.DebugLevel)
@@ -39,20 +41,12 @@ func main() {
 	}
 }
 
-func handleSignal() {
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, os.Kill)
-
-	go func() {
-		<-c
-		os.Exit(0)
-	}()
-}
-
 func listen(socket string) {
 	if err := os.Remove(socket); err != nil {
 		// Ignore error
 	}
+
+	wg := &sync.WaitGroup{}
 
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
@@ -65,28 +59,52 @@ func listen(socket string) {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
-				log.Error(err)
-				continue
+				return
 			}
 
-			go handleConnection(conn)
+			wg.Add(1)
+			go handleConnection(conn, wg)
 		}
 	}()
 
-	sigCh := make(chan os.Signal)
-	signal.Notify(sigCh, os.Interrupt, os.Kill)
+	sigCh := interruptionNotification()
+
+	// Wait until interrupted
 	<-sigCh
+	log.Debugf("quitting")
+
+	// Wait until connections are finalized
+	wg.Wait()
 }
 
-func handleConnection(conn net.Conn) {
-	defer conn.Close()
+func interruptionNotification() <-chan os.Signal {
+	sigCh := make(chan os.Signal)
+	signal.Notify(sigCh, os.Interrupt, os.Kill)
+	return sigCh
+}
 
+func handleConnection(conn net.Conn, wg *sync.WaitGroup) {
 	sess := newSession()
+
+	// "defer" doesn't work with interruption.
+	sigCh := interruptionNotification()
+	go func() {
+		<-sigCh
+		sess.finalize()
+		conn.Close()
+		wg.Done()
+	}()
+
+	// Abandon this goroutine on termination
+	// since conn.Read() blocks everything.
 	log.Debugf("started new session")
 
-	recv := bufio.NewScanner(conn)
-	for recv.Scan() {
-		msg := recv.Bytes()
+	readCh := connReader(conn)
+	for {
+		msg, ok := <-readCh
+		if !ok {
+			return
+		}
 
 		log.Debugf("received: %d bytes", len(msg))
 		log.Debugf("content: '%s'", string(msg))

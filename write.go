@@ -22,8 +22,15 @@ type writeTask struct {
 }
 
 type session struct {
-	files []*os.File
+	openFiles   []*os.File
+	finalizeMux *sync.Mutex
+	// pooledFiles []*os.File
 }
+
+const copyBufferSize = 10 * 1024
+const filePoolSize = 100
+
+// const dirPoolSize = 10
 
 func (c *content) UnmarshalJSON(data []byte) error {
 	var s string
@@ -40,9 +47,12 @@ func (c *content) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func newSession() *session {
+func newSession( /*poolDir string*/ ) *session {
+	// pooledFileCh = make(chan *os.File)
 	return &session{
-		files: []*os.File{},
+		openFiles:   make([]*os.File, filePoolSize),
+		finalizeMux: &sync.Mutex{},
+		// pooledFiles: make([]*os.File, filePoolSize),
 	}
 }
 
@@ -93,7 +103,7 @@ func (s *session) copyFile(srcPath, destPath string) error {
 		return err
 	}
 
-	buf := make([]byte, 10*1024)
+	buf := make([]byte, copyBufferSize)
 
 	readFromSrc := func() (int, error) {
 		start := time.Now()
@@ -132,7 +142,7 @@ func (s *session) copyFile(srcPath, destPath string) error {
 			return err
 		}
 	}
-	s.files = append(s.files, src, dest)
+	s.openFiles = append(s.openFiles, src, dest)
 
 	return nil
 }
@@ -147,12 +157,15 @@ func (s *session) createFile(content []byte, destPath string) error {
 		return err
 	}
 
-	s.files = append(s.files, dest)
+	s.openFiles = append(s.openFiles, dest)
 
 	return nil
 }
 
 func (s *session) finalize() {
+	s.finalizeMux.Lock()
+	defer s.finalizeMux.Unlock()
+
 	start := time.Now()
 	defer func() {
 		log.Debugf("finalize took %s", time.Since(start))
@@ -160,13 +173,14 @@ func (s *session) finalize() {
 
 	wg := &sync.WaitGroup{}
 
-	for _, f := range s.files {
+	for _, f := range s.openFiles {
 		wg.Add(1)
 		go func(f *os.File) {
 			f.Close()
 			wg.Done()
 		}(f)
 	}
+	s.openFiles = []*os.File{}
 
 	wg.Wait()
 }

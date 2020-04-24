@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 
 	log "github.com/sirupsen/logrus"
@@ -27,11 +28,25 @@ func main() {
 				Required: true,
 				Usage:    "path to the socket file to be created",
 			},
+			&cli.PathFlag{
+				Name:     "pooldir",
+				Aliases:  []string{"p"},
+				Required: true,
+				Usage:    "directory for file/dir pooling",
+			},
 		},
 		Action: func(c *cli.Context) error {
-			socket := c.Path("socket")
-			// fmt.Printf("Hello %s", socketPath)
-			listen(socket)
+			socket, err := filepath.Abs(c.Path("socket"))
+			if err != nil {
+				return err
+			}
+
+			poolDir, err := filepath.Abs(c.Path("pooldir"))
+			if err != nil {
+				return err
+			}
+
+			listen(socket, poolDir)
 			return nil
 		},
 	}
@@ -41,7 +56,7 @@ func main() {
 	}
 }
 
-func listen(socket string) {
+func listen(socket, poolDir string) {
 	if err := os.Remove(socket); err != nil {
 		// Ignore error
 	}
@@ -63,7 +78,7 @@ func listen(socket string) {
 			}
 
 			wg.Add(1)
-			go handleConnection(conn, wg)
+			go handleConnection(conn, wg, poolDir)
 		}
 	}()
 
@@ -83,8 +98,8 @@ func interruptionNotification() <-chan os.Signal {
 	return sigCh
 }
 
-func handleConnection(conn net.Conn, wg *sync.WaitGroup) {
-	sess := newSession()
+func handleConnection(conn net.Conn, wg *sync.WaitGroup, poolDir string) {
+	sess := newSession(poolDir)
 
 	// "defer" doesn't work with interruption.
 	sigCh := interruptionNotification()

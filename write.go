@@ -7,10 +7,11 @@ import (
 	"io"
 	"os"
 
-	log "github.com/sirupsen/logrus"
-
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	log "github.com/sirupsen/logrus"
 )
 
 type content []byte
@@ -22,9 +23,11 @@ type writeTask struct {
 }
 
 type session struct {
-	openFiles   []*os.File
-	finalizeMux *sync.Mutex
-	// pooledFiles []*os.File
+	openFiles           []*os.File
+	finalizeMux         *sync.Mutex
+	pooledFilesCh       <-chan *os.File
+	finalizePooledFiles chan<- unit
+	finalized           bool
 }
 
 const copyBufferSize = 10 * 1024
@@ -47,12 +50,40 @@ func (c *content) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func newSession( /*poolDir string*/ ) *session {
-	// pooledFileCh = make(chan *os.File)
+func newSession(poolDir string) *session {
+	pooledFilesCh := make(chan *os.File, filePoolSize)
+	finalizePooledFiles := make(chan unit)
+
+	go func() {
+		for {
+			file, err := os.OpenFile(
+				poolDir+"/"+uuid.New().String()+".pool",
+				os.O_WRONLY|os.O_CREATE|os.O_TRUNC,
+				0666,
+			)
+			if err != nil {
+				log.Error(err)
+				close(pooledFilesCh)
+				return
+			}
+
+			select {
+			case pooledFilesCh <- file:
+				continue
+			case _, _ = <-finalizePooledFiles:
+				file.Close()
+				os.Remove(file.Name())
+				close(pooledFilesCh)
+			}
+		}
+	}()
+
 	return &session{
-		openFiles:   make([]*os.File, filePoolSize),
-		finalizeMux: &sync.Mutex{},
-		// pooledFiles: make([]*os.File, filePoolSize),
+		openFiles:           make([]*os.File, filePoolSize),
+		finalizeMux:         &sync.Mutex{},
+		pooledFilesCh:       pooledFilesCh,
+		finalizePooledFiles: finalizePooledFiles,
+		finalized:           false,
 	}
 }
 
@@ -79,18 +110,15 @@ func (s *session) addWriteTask(input []byte) error {
 }
 
 func (s *session) copyFile(srcPath, destPath string) error {
-	createDest := func() (*os.File, error) {
+	createDest := func() *os.File {
 		start := time.Now()
 		defer func() {
 			log.Debugf("createDest took %s", time.Since(start))
 		}()
 
-		// dest, err := os.Create(destPath)
-		dest, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
-		if err != nil {
-			return nil, err
-		}
-		return dest, nil
+		// dest, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+		file := <-s.pooledFilesCh
+		return file
 	}
 
 	src, err := os.Open(srcPath)
@@ -98,10 +126,7 @@ func (s *session) copyFile(srcPath, destPath string) error {
 		return err
 	}
 
-	dest, err := createDest()
-	if err != nil {
-		return err
-	}
+	dest := createDest()
 
 	buf := make([]byte, copyBufferSize)
 
@@ -171,6 +196,16 @@ func (s *session) finalize() {
 		log.Debugf("finalize took %s", time.Since(start))
 	}()
 
+	if s.finalized {
+		return
+	}
+	defer func() {
+		s.finalized = true
+	}()
+
+	s.finalizePooledFiles <- unit{}
+	close(s.finalizePooledFiles)
+
 	wg := &sync.WaitGroup{}
 
 	for _, f := range s.openFiles {
@@ -180,6 +215,15 @@ func (s *session) finalize() {
 			wg.Done()
 		}(f)
 	}
+
+	for f := range s.pooledFilesCh {
+		wg.Add(1)
+		go func(f *os.File) {
+			f.Close()
+			wg.Done()
+		}(f)
+	}
+
 	s.openFiles = []*os.File{}
 
 	wg.Wait()

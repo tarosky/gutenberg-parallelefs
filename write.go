@@ -31,7 +31,8 @@ type session struct {
 }
 
 const copyBufferSize = 10 * 1024
-const filePoolSize = 100
+const filePoolSize = 20
+const createFilesWorkerCount = 10
 
 // const dirPoolSize = 10
 
@@ -50,8 +51,6 @@ func (c *content) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-const createFilesWorkerCount = 10
-
 func createFiles(
 	poolDir string,
 	pooledFilesCh chan<- *os.File,
@@ -62,46 +61,70 @@ func createFiles(
 	propagateErrorCh := make(chan unit, createFilesWorkerCount)
 
 	go func() {
+		finalize := func(file *os.File) {
+			file.Close()
+			os.Remove(file.Name())
+			log.Tracef("file disposed at main goroutine: %s", file.Name())
+			close(quitCh)
+			close(pooledFilesCh)
+		}
+
 		for {
+			file := <-createdFileCh
 			select {
-			case pooledFilesCh <- <-createdFileCh:
+			case pooledFilesCh <- file:
+				log.Tracef("file consumed at main goroutine: %s", file.Name())
 			case <-finalizePooledFiles:
-				close(quitCh)
-				close(pooledFilesCh)
-				break
+				log.Debug(
+					"createFiles main goroutine: finalizePooledFiles received")
+				finalize(file)
+				return
 			case <-propagateErrorCh:
-				close(quitCh)
-				close(pooledFilesCh)
-				break
+				log.Debug(
+					"createFiles main goroutine: propagateErrorCh received")
+				finalize(file)
+				return
 			}
 		}
 	}()
 
 	for i := 0; i < createFilesWorkerCount; i++ {
-		go func() {
+		go func(workerID int) {
 			for {
 				file, err := os.OpenFile(
 					poolDir+"/"+uuid.New().String()+".pool",
 					os.O_WRONLY|os.O_CREATE|os.O_TRUNC,
 					0666,
 				)
+				log.Tracef(
+					"file created: workerID: %d, path: %s",
+					workerID,
+					file.Name())
 
 				if err != nil {
 					log.Error(err)
 					propagateErrorCh <- unit{}
-					break
+					return
 				}
 
 				select {
 				case createdFileCh <- file:
+					log.Tracef(
+						"file added to pool: workerID: %d, path: %s",
+						workerID,
+						file.Name())
 					continue
 				case <-quitCh:
 					file.Close()
 					os.Remove(file.Name())
-					break
+					log.Tracef(
+						"file disposed: workerID: %d, path: %s",
+						workerID,
+						file.Name())
+					return
 				}
 			}
-		}()
+		}(i)
 	}
 }
 
@@ -109,29 +132,7 @@ func newSession(poolDir string) *session {
 	pooledFilesCh := make(chan *os.File, filePoolSize)
 	finalizePooledFiles := make(chan unit)
 
-	go func() {
-		for {
-			file, err := os.OpenFile(
-				poolDir+"/"+uuid.New().String()+".pool",
-				os.O_WRONLY|os.O_CREATE|os.O_TRUNC,
-				0666,
-			)
-			if err != nil {
-				log.Error(err)
-				close(pooledFilesCh)
-				return
-			}
-
-			select {
-			case pooledFilesCh <- file:
-				continue
-			case _, _ = <-finalizePooledFiles:
-				file.Close()
-				os.Remove(file.Name())
-				close(pooledFilesCh)
-			}
-		}
-	}()
+	createFiles(poolDir, pooledFilesCh, finalizePooledFiles)
 
 	return &session{
 		openFiles:           make([]*os.File, filePoolSize),
@@ -172,16 +173,37 @@ func (s *session) copyFile(srcPath, destPath string) error {
 		}()
 
 		// dest, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
-		file := <-s.pooledFilesCh
-		return file
+		return <-s.pooledFilesCh
 	}
 
-	src, err := os.Open(srcPath)
+	moveDest := func(file *os.File) error {
+		start := time.Now()
+		defer func() {
+			log.Debugf("moveDest took %s", time.Since(start))
+		}()
+
+		return os.Rename(file.Name(), destPath)
+	}
+
+	openSrc := func() (*os.File, error) {
+		start := time.Now()
+		defer func() {
+			log.Debugf("openSrc took %s", time.Since(start))
+		}()
+
+		return os.Open(srcPath)
+	}
+
+	src, err := openSrc()
 	if err != nil {
 		return err
 	}
 
 	dest := createDest()
+
+	if err := moveDest(dest); err != nil {
+		return err
+	}
 
 	buf := make([]byte, copyBufferSize)
 
@@ -275,6 +297,8 @@ func (s *session) finalize() {
 		wg.Add(1)
 		go func(f *os.File) {
 			f.Close()
+			os.Remove(f.Name())
+			log.Tracef("file disposed at finalizer: %s", f.Name())
 			wg.Done()
 		}(f)
 	}

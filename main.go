@@ -15,7 +15,8 @@ import (
 type unit struct{}
 
 func main() {
-	log.SetLevel(log.DebugLevel)
+	// log.SetLevel(log.DebugLevel)
+	log.SetLevel(log.TraceLevel)
 	log.SetOutput(os.Stderr)
 
 	app := &cli.App{

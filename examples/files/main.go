@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -17,7 +16,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	file, err := os.Create(fileTest1)
+	file, err := os.OpenFile(fileTest1, os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -27,13 +26,13 @@ func main() {
 		}
 	}()
 
-	file.WriteString("foo\n")
+	var newSize int64
 
-	time.Sleep(3 * time.Second)
-
-	if err := os.Rename(fileTest1, fileTest2); err != nil {
-		log.Fatal(err)
+	n, err := file.WriteString("h\n")
+	if err != nil {
+		log.Error(err)
 	}
 
-	file.WriteString("bar\n")
+	newSize += int64(n)
+	file.Truncate(newSize)
 }

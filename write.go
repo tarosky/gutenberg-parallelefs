@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -20,21 +20,79 @@ type writeTask struct {
 	Destination string  `json:"dest"`
 	SourcePath  *string `json:"src"`
 	Content     content `json:"content_b64"` // Never use Content for a large file.
+	Precreate   bool    `json:"precreate"`
+}
+
+type precreatedFile struct {
+	file  *os.File
+	isNew bool
+	err   error
+	done  <-chan unit
+}
+
+func precreateFile(path string) *precreatedFile {
+	done := make(chan unit)
+
+	pf := &precreatedFile{
+		done: done,
+	}
+
+	go func() {
+		dir := filepath.Dir(path)
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				pf.err = err
+				done <- unit{}
+				close(done)
+				return
+			}
+		}
+
+		if file, err := os.OpenFile(path, os.O_WRONLY, 0666); err == nil {
+			pf.file = file
+			pf.isNew = false
+			done <- unit{}
+			close(done)
+			return
+		}
+
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0666)
+		if err != nil {
+			pf.err = err
+			done <- unit{}
+			close(done)
+			return
+		}
+
+		pf.file = file
+		pf.isNew = true
+		done <- unit{}
+		close(done)
+	}()
+
+	return pf
+}
+
+func (f *precreatedFile) disposeUnused() error {
+	<-f.done
+
+	if f.isNew {
+		if err := os.Remove(f.file.Name()); err != nil {
+			return err
+		}
+	}
+
+	return f.file.Close()
 }
 
 type session struct {
-	openFiles           []*os.File
-	finalizeMux         *sync.Mutex
-	pooledFilesCh       <-chan *os.File
-	finalizePooledFiles chan<- unit
-	finalized           bool
+	openFiles         []*os.File
+	precreatedFileMap map[string]*precreatedFile
+	finalizeMux       *sync.Mutex
+	finalized         bool
 }
 
 const copyBufferSize = 10 * 1024
-const filePoolSize = 20
-const createFilesWorkerCount = 10
-
-// const dirPoolSize = 10
 
 func (c *content) UnmarshalJSON(data []byte) error {
 	var s string
@@ -51,95 +109,12 @@ func (c *content) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func createFiles(
-	poolDir string,
-	pooledFilesCh chan<- *os.File,
-	finalizePooledFiles <-chan unit,
-) {
-	createdFileCh := make(chan *os.File)
-	quitCh := make(chan unit)
-	propagateErrorCh := make(chan unit, createFilesWorkerCount)
-
-	go func() {
-		finalize := func(file *os.File) {
-			file.Close()
-			os.Remove(file.Name())
-			log.Tracef("file disposed at main goroutine: %s", file.Name())
-			close(quitCh)
-			close(pooledFilesCh)
-		}
-
-		for {
-			file := <-createdFileCh
-			select {
-			case pooledFilesCh <- file:
-				log.Tracef("file consumed at main goroutine: %s", file.Name())
-			case <-finalizePooledFiles:
-				log.Debug(
-					"createFiles main goroutine: finalizePooledFiles received")
-				finalize(file)
-				return
-			case <-propagateErrorCh:
-				log.Debug(
-					"createFiles main goroutine: propagateErrorCh received")
-				finalize(file)
-				return
-			}
-		}
-	}()
-
-	for i := 0; i < createFilesWorkerCount; i++ {
-		go func(workerID int) {
-			for {
-				file, err := os.OpenFile(
-					poolDir+"/"+uuid.New().String()+".pool",
-					os.O_WRONLY|os.O_CREATE|os.O_TRUNC,
-					0666,
-				)
-				log.Tracef(
-					"file created: workerID: %d, path: %s",
-					workerID,
-					file.Name())
-
-				if err != nil {
-					log.Error(err)
-					propagateErrorCh <- unit{}
-					return
-				}
-
-				select {
-				case createdFileCh <- file:
-					log.Tracef(
-						"file added to pool: workerID: %d, path: %s",
-						workerID,
-						file.Name())
-					continue
-				case <-quitCh:
-					file.Close()
-					os.Remove(file.Name())
-					log.Tracef(
-						"file disposed: workerID: %d, path: %s",
-						workerID,
-						file.Name())
-					return
-				}
-			}
-		}(i)
-	}
-}
-
-func newSession(poolDir string) *session {
-	pooledFilesCh := make(chan *os.File, filePoolSize)
-	finalizePooledFiles := make(chan unit)
-
-	createFiles(poolDir, pooledFilesCh, finalizePooledFiles)
-
+func newSession() *session {
 	return &session{
-		openFiles:           make([]*os.File, filePoolSize),
-		finalizeMux:         &sync.Mutex{},
-		pooledFilesCh:       pooledFilesCh,
-		finalizePooledFiles: finalizePooledFiles,
-		finalized:           false,
+		openFiles:         make([]*os.File, 0),
+		precreatedFileMap: map[string]*precreatedFile{},
+		finalizeMux:       &sync.Mutex{},
+		finalized:         false,
 	}
 }
 
@@ -162,27 +137,47 @@ func (s *session) addWriteTask(input []byte) error {
 		return s.createFile(task.Content, task.Destination)
 	}
 
-	return fmt.Errorf("specify either src or content_b64")
+	if task.Precreate {
+		s.precreateFile(task.Destination)
+		return nil
+	}
+
+	return fmt.Errorf("specify any of src, content_b64, or precreate")
+}
+
+func (s *session) precreateFile(destPath string) {
+	start := time.Now()
+	defer func() {
+		log.Debugf("precreateFile took %s", time.Since(start))
+	}()
+
+	if _, ok := s.precreatedFileMap[destPath]; !ok {
+		s.precreatedFileMap[destPath] = precreateFile(destPath)
+	}
 }
 
 func (s *session) copyFile(srcPath, destPath string) error {
-	createDest := func() *os.File {
+	createDest := func() (*os.File, error) {
 		start := time.Now()
 		defer func() {
 			log.Debugf("createDest took %s", time.Since(start))
 		}()
 
-		// dest, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
-		return <-s.pooledFilesCh
-	}
+		if pf, ok := s.precreatedFileMap[destPath]; ok {
+			log.Debugf("precreated file found at: %s", destPath)
 
-	moveDest := func(file *os.File) error {
-		start := time.Now()
-		defer func() {
-			log.Debugf("moveDest took %s", time.Since(start))
-		}()
+			delete(s.precreatedFileMap, destPath)
 
-		return os.Rename(file.Name(), destPath)
+			<-pf.done
+			if err := pf.err; err != nil {
+				return nil, err
+			}
+
+			return pf.file, nil
+		}
+
+		log.Debug("precreated file not found")
+		return os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE, 0666)
 	}
 
 	openSrc := func() (*os.File, error) {
@@ -198,12 +193,13 @@ func (s *session) copyFile(srcPath, destPath string) error {
 	if err != nil {
 		return err
 	}
+	s.openFiles = append(s.openFiles, src)
 
-	dest := createDest()
-
-	if err := moveDest(dest); err != nil {
+	dest, err := createDest()
+	if err != nil {
 		return err
 	}
+	s.openFiles = append(s.openFiles, dest)
 
 	buf := make([]byte, copyBufferSize)
 
@@ -220,15 +216,28 @@ func (s *session) copyFile(srcPath, destPath string) error {
 		return n, nil
 	}
 
+	var writtenBytes int64
+	defer func() {
+		start := time.Now()
+		defer func() {
+			log.Debugf("truncate(defer) took %s", time.Since(start))
+		}()
+
+		dest.Truncate(writtenBytes)
+	}()
+
 	writeToDest := func(n int) error {
 		start := time.Now()
 		defer func() {
 			log.Debugf("writeToDest took %s", time.Since(start))
 		}()
 
-		if _, err := dest.Write(buf[:n]); err != nil {
+		wb, err := dest.Write(buf[:n])
+		if err != nil {
 			return err
 		}
+
+		writtenBytes += int64(wb)
 		return nil
 	}
 
@@ -244,7 +253,6 @@ func (s *session) copyFile(srcPath, destPath string) error {
 			return err
 		}
 	}
-	s.openFiles = append(s.openFiles, src, dest)
 
 	return nil
 }
@@ -280,9 +288,6 @@ func (s *session) finalize() {
 		s.finalized = true
 	}()
 
-	s.finalizePooledFiles <- unit{}
-	close(s.finalizePooledFiles)
-
 	wg := &sync.WaitGroup{}
 
 	for _, f := range s.openFiles {
@@ -293,14 +298,12 @@ func (s *session) finalize() {
 		}(f)
 	}
 
-	for f := range s.pooledFilesCh {
+	for _, pf := range s.precreatedFileMap {
 		wg.Add(1)
-		go func(f *os.File) {
-			f.Close()
-			os.Remove(f.Name())
-			log.Tracef("file disposed at finalizer: %s", f.Name())
+		go func(pf *precreatedFile) {
+			pf.disposeUnused()
 			wg.Done()
-		}(f)
+		}(pf)
 	}
 
 	s.openFiles = []*os.File{}

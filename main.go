@@ -29,12 +29,6 @@ func main() {
 				Required: true,
 				Usage:    "path to the socket file to be created",
 			},
-			&cli.PathFlag{
-				Name:     "pooldir",
-				Aliases:  []string{"p"},
-				Required: true,
-				Usage:    "directory for file/dir pooling",
-			},
 		},
 		Action: func(c *cli.Context) error {
 			socket, err := filepath.Abs(c.Path("socket"))
@@ -42,12 +36,7 @@ func main() {
 				return err
 			}
 
-			poolDir, err := filepath.Abs(c.Path("pooldir"))
-			if err != nil {
-				return err
-			}
-
-			listen(socket, poolDir)
+			listen(socket)
 			return nil
 		},
 	}
@@ -57,7 +46,7 @@ func main() {
 	}
 }
 
-func listen(socket, poolDir string) {
+func listen(socket string) {
 	if err := os.Remove(socket); err != nil {
 		// Ignore error
 	}
@@ -79,7 +68,7 @@ func listen(socket, poolDir string) {
 			}
 
 			wg.Add(1)
-			go handleConnection(conn, wg, poolDir)
+			go handleConnection(conn, wg)
 		}
 	}()
 
@@ -99,8 +88,8 @@ func interruptionNotification() <-chan os.Signal {
 	return sigCh
 }
 
-func handleConnection(conn net.Conn, wg *sync.WaitGroup, poolDir string) {
-	sess := newSession(poolDir)
+func handleConnection(conn net.Conn, wg *sync.WaitGroup) {
+	sess := newSession()
 
 	// "defer" doesn't work with interruption.
 	sigCh := interruptionNotification()

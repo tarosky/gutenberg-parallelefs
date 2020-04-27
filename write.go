@@ -24,6 +24,7 @@ type writeTask struct {
 	Content     content `json:"content_b64"` // Never use Content for a large file.
 	Precreate   bool    `json:"precreate"`
 	Existence   bool    `json:"existence"`
+	Mkdir       bool    `json:"mkdir"`
 }
 
 type precreatedFile struct {
@@ -144,6 +145,47 @@ func (t *dirTree) getPath() string {
 	}
 
 	return *t.pathCache
+}
+
+func (t *dirTree) mkDir(absDirPath string) error {
+	if absDirPath[0] != '/' {
+		log.Fatalf("path must be absolute: %s", absDirPath)
+	}
+
+	// Root directory
+	if len(absDirPath) == 1 {
+		return fmt.Errorf(
+			"cannot mkdir directory: already exists: %s",
+			absDirPath)
+	}
+
+	return t.mkDirInternal(strings.Split(absDirPath[1:], "/"))
+}
+
+func (t *dirTree) mkDirInternal(dirParts []string) error {
+	if len(dirParts) == 0 {
+		log.Fatalf("dirParts must contain at least one element")
+	}
+
+	if t.precreated {
+		return fmt.Errorf("parent directory doesn't exist")
+	}
+
+	child, ok := t.children[dirParts[0]]
+	if !ok {
+		path := t.getPath() + filepath.Join(strings.Join(dirParts, "/"))
+		return os.Mkdir(path, 0755)
+	}
+
+	if len(dirParts) == 1 {
+		if child.precreated {
+			child.precreated = false
+			return nil
+		}
+		return fmt.Errorf("directory already exists")
+	}
+
+	return child.mkDirInternal(dirParts[1:])
 }
 
 func (t *dirTree) ensureDir(absDirPath string, precreate bool) (*dirTree, error) {
@@ -347,7 +389,24 @@ func (s *session) addWriteTask(input []byte) (string, error) {
 		return valFalse, nil
 	}
 
+	if task.Mkdir {
+		if err := s.mkdir(destPath); err != nil {
+			return valFalse, err
+		}
+		return valTrue, err
+	}
+
 	return valInvalid, fmt.Errorf("specify any of src, content_b64, or precreate")
+}
+
+// mkdir returns true only if the directory is newly created.
+func (s *session) mkdir(destPath string) error {
+	start := time.Now()
+	defer func() {
+		log.Debugf("mkdir took %s", time.Since(start))
+	}()
+
+	return s.precreatedDirTree.mkDir(destPath)
 }
 
 func (s *session) existence(destPath string) bool {

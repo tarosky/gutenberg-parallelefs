@@ -18,13 +18,14 @@ import (
 
 type content []byte
 
-type writeTask struct {
+type task struct {
 	Destination string  `json:"dest"`
 	SourcePath  *string `json:"src"`
 	Content     content `json:"content_b64"` // Never use Content for a large file.
 	Precreate   bool    `json:"precreate"`
 	Existence   bool    `json:"existence"`
 	Mkdir       bool    `json:"mkdir"`
+	ListDir     bool    `json:"listdir"`
 }
 
 type precreatedFile struct {
@@ -326,13 +327,13 @@ func newSession() *session {
 	}
 }
 
-func (s *session) addWriteTask(input []byte) (string, error) {
+func (s *session) addTask(input []byte) (string, error) {
 	start := time.Now()
 	defer func() {
-		log.Debugf("addWriteTask took %s", time.Since(start))
+		log.Debugf("addTask took %s", time.Since(start))
 	}()
 
-	var task writeTask
+	var task task
 	if err := json.Unmarshal(input, &task); err != nil {
 		return valInvalid, err
 	}
@@ -396,7 +397,64 @@ func (s *session) addWriteTask(input []byte) (string, error) {
 		return valTrue, err
 	}
 
+	if task.ListDir {
+		files, err := s.listDir(destPath)
+		if err != nil {
+			return "[]", err
+		}
+
+		j, err := json.Marshal(files)
+		if err != nil {
+			return "[]", err
+		}
+
+		return string(j), nil
+	}
+
 	return valInvalid, fmt.Errorf("specify any of src, content_b64, or precreate")
+}
+
+func (s *session) listDir(dirPath string) ([]string, error) {
+	start := time.Now()
+	defer func() {
+		log.Debugf("listDir took %s", time.Since(start))
+	}()
+
+	f, err := os.Open(dirPath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	names, err := f.Readdirnames(-1)
+	if err != nil {
+		return nil, err
+	}
+
+	resNames := make([]string, 0, len(names))
+	for _, n := range names {
+		path := dirPath + "/" + n
+		if t := s.precreatedDirTree.find(path); t != nil {
+			if t.precreated {
+				continue
+			}
+			resNames = append(resNames, n)
+			continue
+		}
+
+		if f, ok := s.precreatedFileMap[path]; ok {
+			<-f.done
+			if f.isNew {
+				continue
+			}
+			resNames = append(resNames, n)
+			continue
+		}
+
+		resNames = append(resNames, n)
+	}
+
+	return resNames, nil
 }
 
 // mkdir returns true only if the directory is newly created.

@@ -120,7 +120,7 @@ func handleConnection(conn net.Conn, wg *sync.WaitGroup) {
 			return
 		}
 
-		res, err := sess.addWriteTask(msg)
+		res, err := sess.addTask(msg)
 		if err != nil {
 			log.Error(err)
 		}

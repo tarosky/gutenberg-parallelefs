@@ -7,11 +7,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/sync/errgroup"
 )
 
 type content []byte
@@ -21,6 +23,7 @@ type writeTask struct {
 	SourcePath  *string `json:"src"`
 	Content     content `json:"content_b64"` // Never use Content for a large file.
 	Precreate   bool    `json:"precreate"`
+	Existence   bool    `json:"existence"`
 }
 
 type precreatedFile struct {
@@ -29,6 +32,12 @@ type precreatedFile struct {
 	err   error
 	done  <-chan unit
 }
+
+const (
+	valFalse   = "false"
+	valTrue    = "true"
+	valInvalid = "invalid"
+)
 
 func precreateFile(path string) *precreatedFile {
 	done := make(chan unit)
@@ -85,11 +94,167 @@ func (f *precreatedFile) disposeUnused() error {
 	return f.file.Close()
 }
 
+type dirTree struct {
+	children   map[string]*dirTree
+	name       string
+	parent     *dirTree
+	precreated bool
+	pathCache  *string
+}
+
+func newDirTree(name string, parent *dirTree, precreated bool) *dirTree {
+	return &dirTree{
+		children:   map[string]*dirTree{},
+		name:       name,
+		parent:     parent,
+		precreated: precreated,
+	}
+}
+
+func (t *dirTree) createChild(name string, precreate bool) (*dirTree, error) {
+	path := t.getPath() + name
+	stat, err := os.Stat(path)
+	if err != nil {
+		if err := os.Mkdir(path, 0755); err != nil {
+			return nil, err
+		}
+		t.children[name] = newDirTree(name, t, precreate)
+		return t.children[name], nil
+	}
+
+	if stat.IsDir() {
+		t.children[name] = newDirTree(name, t, false)
+		return t.children[name], nil
+	}
+
+	return nil, fmt.Errorf(
+		"cannot create directory: file already exists: %s", path)
+}
+
+// getPath returns the dir path with a trailing slash.
+func (t *dirTree) getPath() string {
+	if t.pathCache == nil {
+		var path string
+		if t.parent == nil {
+			path = "/"
+		} else {
+			path = t.parent.getPath() + t.name + "/"
+		}
+		t.pathCache = &path
+	}
+
+	return *t.pathCache
+}
+
+func (t *dirTree) ensureDir(absDirPath string, precreate bool) (*dirTree, error) {
+	if absDirPath[0] != '/' {
+		log.Fatalf("path must be absolute: %s", absDirPath)
+	}
+
+	// Root directory
+	if len(absDirPath) == 1 {
+		return t, nil
+	}
+
+	return t.ensureDirInternal(strings.Split(absDirPath[1:], "/"), precreate)
+}
+
+func (t *dirTree) ensureDirInternal(dirParts []string, precreate bool) (*dirTree, error) {
+	if len(dirParts) < 1 {
+		log.Fatalf("dirParts must contain at least one element")
+	}
+
+	child, ok := t.children[dirParts[0]]
+	if !ok {
+		var err error
+		child, err = t.createChild(dirParts[0], precreate)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		child.precreated = child.precreated && precreate
+	}
+
+	if len(dirParts) < 2 {
+		return child, nil
+	}
+
+	return child.ensureDirInternal(dirParts[1:], precreate)
+}
+
+func (t *dirTree) clean() error {
+	eg := &errgroup.Group{}
+
+	for _, c := range t.children {
+		c := c
+		eg.Go(c.clean)
+	}
+
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+
+	if !t.precreated {
+		return nil
+	}
+
+	path := t.getPath()
+
+	dir, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer dir.Close()
+
+	if _, err := dir.Readdirnames(1); err != nil {
+		if err == io.EOF {
+			return os.Remove(path)
+		}
+		return err
+	}
+
+	return nil
+}
+
+func (t *dirTree) find(absDirPath string) *dirTree {
+	if absDirPath[0] != '/' {
+		log.Fatalf("path must be absolute: %s", absDirPath)
+	}
+
+	// Root directory
+	if len(absDirPath) == 1 {
+		return t
+	}
+
+	return t.findInternal(strings.Split(absDirPath[1:], "/"))
+}
+
+func (t *dirTree) findInternal(dirParts []string) *dirTree {
+	if len(dirParts) == 0 {
+		log.Fatalf("dirParts must contain at least one element")
+	}
+
+	child, ok := t.children[dirParts[0]]
+	if !ok {
+		return nil
+	}
+
+	if len(dirParts) == 1 {
+		return child
+	}
+
+	return child.findInternal(dirParts[1:])
+}
+
 type session struct {
 	openFiles         []*os.File
 	precreatedFileMap map[string]*precreatedFile
 	finalizeMux       *sync.Mutex
 	finalized         bool
+	precreatedDirTree *dirTree
 }
 
 const copyBufferSize = 10 * 1024
@@ -115,10 +280,11 @@ func newSession() *session {
 		precreatedFileMap: map[string]*precreatedFile{},
 		finalizeMux:       &sync.Mutex{},
 		finalized:         false,
+		precreatedDirTree: newDirTree("", nil, false),
 	}
 }
 
-func (s *session) addWriteTask(input []byte) error {
+func (s *session) addWriteTask(input []byte) (string, error) {
 	start := time.Now()
 	defer func() {
 		log.Debugf("addWriteTask took %s", time.Since(start))
@@ -126,37 +292,99 @@ func (s *session) addWriteTask(input []byte) error {
 
 	var task writeTask
 	if err := json.Unmarshal(input, &task); err != nil {
+		return valInvalid, err
+	}
+
+	normalizePath := func(path string) (string, error) {
+		start := time.Now()
+		defer func() {
+			log.Debugf("normalizePath took %s", time.Since(start))
+		}()
+
+		// There's an assumption that no symbolic link exists.
+		return filepath.Abs(path)
+	}
+
+	precreateDirs := func(path string) error {
+		start := time.Now()
+		defer func() {
+			log.Debugf("precreateDirs took %s", time.Since(start))
+		}()
+
+		_, err := s.precreatedDirTree.ensureDir(filepath.Dir(path), true)
 		return err
 	}
 
+	destPath, err := normalizePath(task.Destination)
+	if err != nil {
+		return valInvalid, err
+	}
+
 	if task.SourcePath != nil {
-		return s.copyFile(*task.SourcePath, task.Destination)
+		return s.copyFile(*task.SourcePath, destPath)
 	}
 
 	if task.Content != nil {
-		return s.createFile(task.Content, task.Destination)
+		return s.createFile(task.Content, destPath)
 	}
 
 	if task.Precreate {
-		s.precreateFile(task.Destination)
-		return nil
+		if err := precreateDirs(destPath); err != nil {
+			return valTrue, err
+		}
+
+		if err := s.precreateFile(destPath); err != nil {
+			return valTrue, err
+		}
+
+		return valTrue, nil
 	}
 
-	return fmt.Errorf("specify any of src, content_b64, or precreate")
+	if task.Existence {
+		if s.existence(destPath) {
+			return valTrue, nil
+		}
+		return valFalse, nil
+	}
+
+	return valInvalid, fmt.Errorf("specify any of src, content_b64, or precreate")
 }
 
-func (s *session) precreateFile(destPath string) {
+func (s *session) existence(destPath string) bool {
+	start := time.Now()
+	defer func() {
+		log.Debugf("existence took %s", time.Since(start))
+	}()
+
+	if f, ok := s.precreatedFileMap[destPath]; ok {
+		<-f.done
+		return !f.isNew
+	}
+
+	if t := s.precreatedDirTree.find(destPath); t != nil {
+		return !t.precreated
+	}
+
+	_, err := os.Stat(destPath)
+	return !os.IsNotExist(err)
+}
+
+func (s *session) precreateFile(destPath string) error {
 	start := time.Now()
 	defer func() {
 		log.Debugf("precreateFile took %s", time.Since(start))
 	}()
 
-	if _, ok := s.precreatedFileMap[destPath]; !ok {
-		s.precreatedFileMap[destPath] = precreateFile(destPath)
+	if _, ok := s.precreatedFileMap[destPath]; ok {
+		return nil
 	}
+
+	s.precreatedFileMap[destPath] = precreateFile(destPath)
+
+	return nil
 }
 
-func (s *session) copyFile(srcPath, destPath string) error {
+func (s *session) copyFile(srcPath, destPath string) (string, error) {
 	createDest := func() (*os.File, error) {
 		start := time.Now()
 		defer func() {
@@ -191,13 +419,13 @@ func (s *session) copyFile(srcPath, destPath string) error {
 
 	src, err := openSrc()
 	if err != nil {
-		return err
+		return valFalse, err
 	}
 	s.openFiles = append(s.openFiles, src)
 
 	dest, err := createDest()
 	if err != nil {
-		return err
+		return valFalse, err
 	}
 	s.openFiles = append(s.openFiles, dest)
 
@@ -244,32 +472,32 @@ func (s *session) copyFile(srcPath, destPath string) error {
 	for {
 		n, err := readFromSrc()
 		if err != nil {
-			return err
+			return valFalse, err
 		}
 		if n == 0 {
 			break
 		}
 		if err := writeToDest(n); err != nil {
-			return err
+			return valFalse, err
 		}
 	}
 
-	return nil
+	return valTrue, nil
 }
 
-func (s *session) createFile(content []byte, destPath string) error {
+func (s *session) createFile(content []byte, destPath string) (string, error) {
 	dest, err := os.Create(destPath)
 	if err != nil {
-		return err
+		return valFalse, err
 	}
 
 	if _, err := dest.Write(content); err != nil {
-		return err
+		return valFalse, err
 	}
 
 	s.openFiles = append(s.openFiles, dest)
 
-	return nil
+	return valTrue, nil
 }
 
 func (s *session) finalize() {
@@ -307,6 +535,9 @@ func (s *session) finalize() {
 	}
 
 	s.openFiles = []*os.File{}
-
 	wg.Wait()
+
+	if err := s.precreatedDirTree.clean(); err != nil {
+		log.Error(err)
+	}
 }

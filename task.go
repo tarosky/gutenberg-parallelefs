@@ -19,13 +19,15 @@ import (
 type content []byte
 
 type task struct {
-	Destination string  `json:"dest"`
-	SourcePath  *string `json:"src"`
-	Content     content `json:"content_b64"` // Never use Content for a large file.
-	Precreate   bool    `json:"precreate"`
-	Existence   bool    `json:"existence"`
-	Mkdir       bool    `json:"mkdir"`
-	ListDir     bool    `json:"listdir"`
+	Destination     string  `json:"dest"`
+	SourcePath      *string `json:"src"`
+	Content         content `json:"content_b64"` // Never use Content for a large file.
+	Precreate       bool    `json:"precreate"`
+	Existence       bool    `json:"existence"`
+	Mkdir           bool    `json:"mkdir"`
+	ListDir         bool    `json:"listdir"`
+	Delete          bool    `json:"delete"`
+	DeleteRecursive bool    `json:"delete_recursive"`
 }
 
 type precreatedFile struct {
@@ -38,7 +40,7 @@ type precreatedFile struct {
 const (
 	valFalse   = "false"
 	valTrue    = "true"
-	valInvalid = "invalid"
+	valInvalid = "null"
 )
 
 func precreateFile(path string) *precreatedFile {
@@ -146,6 +148,40 @@ func (t *dirTree) getPath() string {
 	}
 
 	return *t.pathCache
+}
+
+func (t *dirTree) registerDir(absDirPath string, precreated bool) (*dirTree, error) {
+	if absDirPath[0] != '/' {
+		log.Fatalf("path must be absolute: %s", absDirPath)
+	}
+
+	// Root directory
+	if len(absDirPath) == 1 {
+		return t, nil
+	}
+
+	return t.registerDirInternal(strings.Split(absDirPath[1:], "/"), precreated)
+}
+
+func (t *dirTree) registerDirInternal(dirParts []string, precreated bool) (*dirTree, error) {
+	if len(dirParts) == 0 {
+		log.Fatalf("dirParts must contain at least one element")
+	}
+
+	if len(dirParts) == 1 {
+		child, ok := t.children[dirParts[0]]
+		if !ok {
+			t.children[dirParts[0]] = newDirTree(dirParts[0], t, precreated)
+			return t.children[dirParts[0]], nil
+		}
+		return nil, fmt.Errorf("directory already registered: %s", child.getPath())
+	}
+
+	if _, ok := t.children[dirParts[0]]; !ok {
+		t.children[dirParts[0]] = newDirTree(dirParts[0], t, false)
+	}
+
+	return t.children[dirParts[0]].registerDirInternal(dirParts[1:], precreated)
 }
 
 func (t *dirTree) mkDir(absDirPath string) error {
@@ -300,7 +336,7 @@ type session struct {
 	precreatedDirTree *dirTree
 }
 
-const copyBufferSize = 10 * 1024
+const copyBufferSize = 64 * 1024
 
 func (c *content) UnmarshalJSON(data []byte) error {
 	var s string
@@ -411,7 +447,204 @@ func (s *session) addTask(input []byte) (string, error) {
 		return string(j), nil
 	}
 
-	return valInvalid, fmt.Errorf("specify any of src, content_b64, or precreate")
+	if task.Delete {
+		succeeded, err := s.deleteSingle(destPath)
+		var res string
+		if succeeded {
+			res = valTrue
+		} else {
+			res = valFalse
+		}
+
+		return res, err
+	}
+
+	if task.DeleteRecursive {
+		succeeded, err := s.deleteRecursive(destPath)
+		var res string
+		if succeeded {
+			res = valTrue
+		} else {
+			res = valFalse
+		}
+
+		return res, err
+	}
+
+	return valInvalid, fmt.Errorf("need more parameters")
+}
+
+func (s *session) deleteRecursive(path string) (bool, error) {
+	start := time.Now()
+	defer func() {
+		log.Debugf("deleteRecursive took %s", time.Since(start))
+	}()
+
+	return s.delete(path, true)
+}
+
+func (s *session) deleteSingle(path string) (bool, error) {
+	start := time.Now()
+	defer func() {
+		log.Debugf("deleteSingle took %s", time.Since(start))
+	}()
+
+	return s.delete(path, false)
+}
+
+func (s *session) delete(path string, recursive bool) (bool, error) {
+	if f, ok := s.precreatedFileMap[path]; ok {
+		<-f.done
+		if f.isNew {
+			return false, nil
+		}
+		f.isNew = true
+		return true, nil
+	}
+
+	if t := s.precreatedDirTree.find(path); t != nil {
+		if t.precreated {
+			return false, nil
+		}
+
+		names, err := s.listDir(path)
+		if err != nil {
+			return false, err
+		}
+
+		if len(names) == 0 {
+			t.precreated = true
+			return true, nil
+		}
+
+		if recursive {
+			eg := &errgroup.Group{}
+			for _, n := range names {
+				path2 := path + "/" + n
+				eg.Go(func() error {
+					succeeded, err := s.delete(path2, true)
+					if err != nil {
+						return err
+					}
+
+					if !succeeded {
+						return fmt.Errorf("failed to delete: %s", path2)
+					}
+
+					return nil
+				})
+			}
+
+			if err := eg.Wait(); err != nil {
+				return false, err
+			}
+
+			t.precreated = true
+			return true, nil
+		}
+
+		return false, nil
+	}
+
+	fi, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+
+		return false, err
+	}
+
+	if !fi.IsDir() {
+		if err := os.Remove(path); err != nil {
+			if os.IsNotExist(err) {
+				return false, nil
+			}
+
+			return false, err
+		}
+
+		return true, nil
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	names, err := f.Readdirnames(-1)
+	if err != nil {
+		return false, err
+	}
+
+	precreatedFileExists := false
+	unmanagedFileExists := false
+	for _, n := range names {
+		if f, ok := s.precreatedFileMap[path+"/"+n]; ok {
+			<-f.done
+			if f.isNew {
+				precreatedFileExists = true
+			}
+		} else {
+			unmanagedFileExists = true
+		}
+	}
+
+	if recursive {
+		eg := &errgroup.Group{}
+		for _, n := range names {
+			path2 := path + "/" + n
+			eg.Go(func() error {
+				succeeded, err := s.delete(path2, true)
+				if err != nil {
+					return err
+				}
+
+				if !succeeded {
+					return fmt.Errorf("failed to delete: %s", path2)
+				}
+
+				return nil
+			})
+		}
+
+		if err := eg.Wait(); err != nil {
+			return false, err
+		}
+
+		if precreatedFileExists {
+			if _, err := s.precreatedDirTree.registerDir(path, true); err != nil {
+				return false, err
+			}
+
+			return true, nil
+		}
+
+		if err := os.Remove(path); err != nil {
+			return false, err
+		}
+
+		return true, nil
+	}
+
+	if precreatedFileExists {
+		if unmanagedFileExists {
+			return false, nil
+		}
+
+		if _, err := s.precreatedDirTree.registerDir(path, true); err != nil {
+			return false, err
+		}
+
+		return true, nil
+	}
+
+	if err := os.Remove(path); err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 func (s *session) listDir(dirPath string) ([]string, error) {
@@ -546,6 +779,13 @@ func (s *session) copyFile(srcPath, destPath string) (string, error) {
 	}
 	s.openFiles = append(s.openFiles, dest)
 
+	destStat, err := dest.Stat()
+	if err != nil {
+		return valFalse, err
+	}
+
+	destOldBytes := destStat.Size()
+
 	buf := make([]byte, copyBufferSize)
 
 	readFromSrc := func() (int, error) {
@@ -567,6 +807,14 @@ func (s *session) copyFile(srcPath, destPath string) (string, error) {
 		defer func() {
 			log.Debugf("truncate(defer) took %s", time.Since(start))
 		}()
+
+		if destOldBytes <= writtenBytes {
+			log.Debugf(
+				"truncation omitted: old: %d bytes, new: %d bytes",
+				destOldBytes,
+				writtenBytes)
+			return
+		}
 
 		dest.Truncate(writtenBytes)
 	}()
@@ -591,9 +839,11 @@ func (s *session) copyFile(srcPath, destPath string) (string, error) {
 		if err != nil {
 			return valFalse, err
 		}
+
 		if n == 0 {
 			break
 		}
+
 		if err := writeToDest(n); err != nil {
 			return valFalse, err
 		}

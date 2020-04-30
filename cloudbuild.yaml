@@ -38,6 +38,7 @@ steps:
   - work/parallelefs
   env:
   - GO111MODULE=on
+  - CGO_ENABLED=0
 
 - name: gcr.io/cloud-builders/curl
   # Generate version

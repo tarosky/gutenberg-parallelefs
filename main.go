@@ -18,6 +18,9 @@ func main() {
 	// log.SetLevel(log.DebugLevel)
 	log.SetLevel(log.TraceLevel)
 	log.SetOutput(os.Stderr)
+	log.SetFormatter(&log.TextFormatter{
+		TimestampFormat: "2006-01-02T15:04:05Z07:00.000000",
+	})
 
 	app := &cli.App{
 		Name:  "parallelefs",
@@ -125,6 +128,9 @@ func handleConnection(conn net.Conn, wg *sync.WaitGroup) {
 			log.Error(err)
 		}
 
-		conn.Write([]byte(res + "\n"))
+		resbs := []byte(res + "\n")
+		conn.Write(resbs)
+		log.Debugf("sent: %d bytes", len(resbs))
+		log.Debugf("content: '%s'", string(resbs))
 	}
 }

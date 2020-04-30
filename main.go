@@ -1,11 +1,12 @@
 package main
 
 import (
+	"context"
+	"io"
 	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sync"
 
 	log "github.com/sirupsen/logrus"
 
@@ -32,6 +33,11 @@ func main() {
 				Required: true,
 				Usage:    "path to the socket file to be created",
 			},
+			&cli.BoolFlag{
+				Name:     "panic",
+				Required: false,
+				Usage:    "Intentionally panic at the end of program for debugging",
+			},
 		},
 		Action: func(c *cli.Context) error {
 			socket, err := filepath.Abs(c.Path("socket"))
@@ -40,6 +46,15 @@ func main() {
 			}
 
 			listen(socket)
+
+			return nil
+		},
+		After: func(c *cli.Context) error {
+			// Check remaining goroutines for debugging
+			if c.Bool("panic") {
+				panic("end of program")
+			}
+
 			return nil
 		},
 	}
@@ -54,7 +69,7 @@ func listen(socket string) {
 		// Ignore error
 	}
 
-	wg := &sync.WaitGroup{}
+	// wg := &sync.WaitGroup{}
 
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
@@ -63,15 +78,22 @@ func listen(socket string) {
 	defer listener.Close()
 	log.Debugf("started listening")
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	go func() {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
+				// This will be called immediately after closing the listener.
 				return
 			}
 
-			wg.Add(1)
-			go handleConnection(conn, wg)
+			// wg.Add(1)
+			go func() {
+				// defer wg.Done()
+				defer conn.Close()
+				handleConnection(ctx, conn)
+			}()
 		}
 	}()
 
@@ -80,9 +102,10 @@ func listen(socket string) {
 	// Wait until interrupted
 	<-sigCh
 	log.Debugf("quitting")
+	cancel()
 
-	// Wait until connections are finalized
-	wg.Wait()
+	// // Wait until connections are finalized
+	// wg.Wait()
 }
 
 func interruptionNotification() <-chan os.Signal {
@@ -91,46 +114,46 @@ func interruptionNotification() <-chan os.Signal {
 	return sigCh
 }
 
-func handleConnection(conn net.Conn, wg *sync.WaitGroup) {
+func handleConnection(ctx context.Context, conn io.ReadWriter) {
 	sess := newSession()
+	defer sess.finalize()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-	// "defer" doesn't work with interruption.
-	sigCh := interruptionNotification()
-	go func() {
-		<-sigCh
-		sess.finalize()
-		conn.Close()
-		wg.Done()
-	}()
-
-	// Abandon this goroutine on termination
-	// since conn.Read() blocks everything.
 	log.Debugf("started new session")
 
-	readCh := connReader(conn)
+	recvLine := connReader(conn)
+
 	for {
-		msg, ok := <-readCh
-		if !ok {
+		select {
+		case <-ctx.Done():
 			return
+		case msg, ok := <-recvLine:
+			if !ok {
+				cancel()
+				continue
+			}
+
+			log.Debugf("received: %d bytes", len(msg))
+			log.Debugf("content: '%s'", string(msg))
+
+			// Empty request means the end of this session.
+			if len(msg) == 0 {
+				sess.finalize()
+				conn.Write([]byte("true\n"))
+				cancel()
+				continue
+			}
+
+			res, err := sess.addTask(msg)
+			if err != nil {
+				log.Error(err)
+			}
+
+			resbs := []byte(res + "\n")
+			conn.Write(resbs)
+			log.Debugf("sent: %d bytes", len(resbs))
+			log.Debugf("content: '%s'", string(resbs))
 		}
-
-		log.Debugf("received: %d bytes", len(msg))
-		log.Debugf("content: '%s'", string(msg))
-
-		if len(msg) == 0 {
-			sess.finalize()
-			conn.Write([]byte("true\n"))
-			return
-		}
-
-		res, err := sess.addTask(msg)
-		if err != nil {
-			log.Error(err)
-		}
-
-		resbs := []byte(res + "\n")
-		conn.Write(resbs)
-		log.Debugf("sent: %d bytes", len(resbs))
-		log.Debugf("content: '%s'", string(resbs))
 	}
 }

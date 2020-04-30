@@ -2,30 +2,33 @@ package main
 
 import (
 	"bufio"
-	"net"
+	"io"
 
 	log "github.com/sirupsen/logrus"
 )
 
-func connReader(conn net.Conn) <-chan []byte {
-	readCh := make(chan []byte)
+func connReader(conn io.Reader) <-chan []byte {
+	recvLine := make(chan []byte)
 	recv := bufio.NewScanner(conn)
 
+	// Abandon this goroutine on termination
+	// since conn.Read() blocks everything.
 	go func() {
+		defer close(recvLine)
+
 		for {
 			if ok := recv.Scan(); !ok {
-				// not EOF
 				if recv.Err() != nil {
-					log.Error(recv.Err())
+					// This will be called when the connection is closed.
+					log.Debug(recv.Err())
 				}
 
-				close(readCh)
 				return
 			}
 
-			readCh <- recv.Bytes()
+			recvLine <- recv.Bytes()
 		}
 	}()
 
-	return readCh
+	return recvLine
 }

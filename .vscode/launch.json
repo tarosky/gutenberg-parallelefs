@@ -16,6 +16,16 @@
                 "--socket",
                 "work/test.sock"
             ]
+        },
+        {
+            "showLog": true,
+            "name": "Tests",
+            "type": "go",
+            "request": "launch",
+            "mode": "test",
+            "program": "${workspaceFolder}",
+            "env": {},
+            "args": []
         }
     ]
 }

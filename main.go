@@ -16,8 +16,7 @@ import (
 type unit struct{}
 
 func main() {
-	// log.SetLevel(log.DebugLevel)
-	log.SetLevel(log.TraceLevel)
+	log.SetLevel(log.DebugLevel)
 	log.SetOutput(os.Stderr)
 	log.SetFormatter(&log.TextFormatter{
 		TimestampFormat: "2006-01-02T15:04:05Z07:00.000000",
@@ -69,8 +68,6 @@ func listen(socket string) {
 		// Ignore error
 	}
 
-	// wg := &sync.WaitGroup{}
-
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		log.Fatal(err)
@@ -88,24 +85,17 @@ func listen(socket string) {
 				return
 			}
 
-			// wg.Add(1)
 			go func() {
-				// defer wg.Done()
 				defer conn.Close()
 				handleConnection(ctx, conn)
 			}()
 		}
 	}()
 
-	sigCh := interruptionNotification()
-
 	// Wait until interrupted
-	<-sigCh
+	<-interruptionNotification()
 	log.Debugf("quitting")
 	cancel()
-
-	// // Wait until connections are finalized
-	// wg.Wait()
 }
 
 func interruptionNotification() <-chan os.Signal {

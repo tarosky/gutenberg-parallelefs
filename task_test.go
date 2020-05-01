@@ -17,13 +17,16 @@ type testFS struct {
 }
 
 const (
-	testRootDir = "."
-	testDir1    = "subdir"
+	testRootDir  = "."
+	testDir1     = "subdir"
+	testDir1Dir1 = "subdir/subdir"
 
-	testFile1     = "test.txt"
-	testFile2     = "test2.txt"
-	testDir1File1 = "subdir/test.txt"
-	testDir1File2 = "subdir/test2.txt"
+	testFile1         = "test.txt"
+	testFile2         = "test2.txt"
+	testDir1File1     = "subdir/test.txt"
+	testDir1File2     = "subdir/test2.txt"
+	testDir1Dir1File1 = "subdir/subdir/test.txt"
+	testDir1Dir1File2 = "subdir/subdir/test2.txt"
 
 	testContent1 = "test-string"
 
@@ -120,7 +123,8 @@ type testpack struct {
 }
 
 func TestMain(m *testing.M) {
-	log.SetLevel(log.InfoLevel)
+	log.SetLevel(log.DebugLevel)
+	// log.SetLevel(log.InfoLevel)
 	log.SetOutput(os.Stderr)
 
 	os.Exit(m.Run())
@@ -129,6 +133,7 @@ func TestMain(m *testing.M) {
 func run(test func(*testpack)) func(*testing.T) {
 	return func(t *testing.T) {
 		sess := newSession()
+		defer sess.finalize()
 		fs := createTestFS()
 		as := assert.New(t)
 		os.RemoveAll(fs.baseDir)
@@ -195,25 +200,37 @@ func TestCopyFile(t *testing.T) {
 
 func TestPrecreate(t *testing.T) {
 	t.Run("normal", run(func(p *testpack) {
-		{
-			res, err := p.sess.addTask(taskf(
-				`{"dest": "%s", "precreate": true}`,
-				p.fs.path(testFile1)))
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testFile1)))
 
-			p.assert.NoError(err)
-			p.assert.Equal(testResTrue, res)
-		}
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+	}))
 
-		{
-			res, err := p.sess.addTask(taskf(
-				`{"dest": "%s", "content_b64": "%s"}`,
-				p.fs.path(testFile1),
-				b64String(testContent1)))
+	t.Run("deep file", run(func(p *testpack) {
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1File1)))
 
-			p.assert.NoError(err)
-			p.assert.Equal(testResTrue, res)
-			p.assert.Equal(testContent1, p.fs.file(testFile1).read())
-		}
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+		p.assert.Equal([]string{testDir1}, p.fs.dir(testRootDir).ls())
+	}))
+
+	t.Run("normal, fulfilled by content", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testFile1)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "content_b64": "%s"}`,
+			p.fs.path(testFile1),
+			b64String(testContent1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+		p.assert.Equal(testContent1, p.fs.file(testFile1).read())
 	}))
 
 	t.Run("discarded new file", run(func(p *testpack) {
@@ -239,30 +256,132 @@ func TestPrecreate(t *testing.T) {
 		p.assert.Equal(testContent1, p.fs.file(testFile1).read())
 	}))
 
-	t.Run("deep file", run(func(p *testpack) {
-		{
-			res, err := p.sess.addTask(taskf(
-				`{"dest": "%s", "precreate": true}`,
-				p.fs.path(testDir1File1)))
+	t.Run("deep file, fulfilled by content", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1File1)))
 
-			p.assert.NoError(err)
-			p.assert.Equal(testResTrue, res)
-			p.assert.Equal([]string{testDir1}, p.fs.dir(testRootDir).ls())
-		}
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "content_b64": "%s"}`,
+			p.fs.path(testDir1File1),
+			b64String(testContent1)))
 
-		{
-			res, err := p.sess.addTask(taskf(
-				`{"dest": "%s", "content_b64": "%s"}`,
-				p.fs.path(testDir1File1),
-				b64String(testContent1)))
-
-			p.assert.NoError(err)
-			p.assert.Equal(testResTrue, res)
-			p.assert.Equal(testContent1, p.fs.file(testDir1File1).read())
-		}
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+		p.assert.Equal(testContent1, p.fs.file(testDir1File1).read())
 	}))
 
-	t.Run("two deep files, first one discarded", run(func(p *testpack) {
+	// t.Run("two deep files, first one discarded, fulfilled by content", run(func(p *testpack) {
+	// 	p.sess.addTask(taskf(
+	// 		`{"dest": "%s", "precreate": true}`,
+	// 		p.fs.path(testDir1File1)))
+	// 	p.sess.addTask(taskf(
+	// 		`{"dest": "%s", "precreate": true}`,
+	// 		p.fs.path(testDir1File2)))
+
+	// 	p.sess.addTask(taskf(
+	// 		`{"dest": "%s", "content_b64": "%s"}`,
+	// 		p.fs.path(testDir1File2),
+	// 		b64String(testContent1)))
+
+	// 	p.sess.finalize()
+
+	// 	p.assert.Equal([]string{testFile2}, p.fs.dir(testDir1).ls())
+	// }))
+
+	// t.Run("two deep files, second one discarded, fulfilled by content", run(func(p *testpack) {
+	// 	p.sess.addTask(taskf(
+	// 		`{"dest": "%s", "precreate": true}`,
+	// 		p.fs.path(testDir1File1)))
+	// 	p.sess.addTask(taskf(
+	// 		`{"dest": "%s", "precreate": true}`,
+	// 		p.fs.path(testDir1File2)))
+
+	// 	p.sess.addTask(taskf(
+	// 		`{"dest": "%s", "content_b64": "%s"}`,
+	// 		p.fs.path(testDir1File1),
+	// 		b64String(testContent1)))
+
+	// 	p.sess.finalize()
+
+	// 	p.assert.Equal([]string{testFile1}, p.fs.dir(testDir1).ls())
+	// }))
+
+	// t.Run("two deep files with different levels, shallower one discarded, fulfilled by content", run(func(p *testpack) {
+	// 	p.sess.addTask(taskf(
+	// 		`{"dest": "%s", "precreate": true}`,
+	// 		p.fs.path(testDir1File2)))
+	// 	p.sess.addTask(taskf(
+	// 		`{"dest": "%s", "precreate": true}`,
+	// 		p.fs.path(testDir1Dir1File1)))
+
+	// 	p.sess.addTask(taskf(
+	// 		`{"dest": "%s", "content_b64": "%s"}`,
+	// 		p.fs.path(testDir1Dir1File1),
+	// 		b64String(testContent1)))
+
+	// 	p.sess.finalize()
+
+	// 	p.assert.Equal([]string{testFile1}, p.fs.dir(testDir1Dir1).ls())
+	// 	p.assert.Equal([]string{testDir1}, p.fs.dir(testDir1).ls())
+	// }))
+
+	// t.Run("two deep files with different levels, deeper one discarded, fulfilled by content", run(func(p *testpack) {
+	// 	p.sess.addTask(taskf(
+	// 		`{"dest": "%s", "precreate": true}`,
+	// 		p.fs.path(testDir1File2)))
+	// 	p.sess.addTask(taskf(
+	// 		`{"dest": "%s", "precreate": true}`,
+	// 		p.fs.path(testDir1Dir1File1)))
+
+	// 	p.sess.addTask(taskf(
+	// 		`{"dest": "%s", "content_b64": "%s"}`,
+	// 		p.fs.path(testDir1File2),
+	// 		b64String(testContent1)))
+
+	// 	p.sess.finalize()
+
+	// 	p.assert.Equal([]string{testFile2}, p.fs.dir(testDir1).ls())
+	// }))
+
+	t.Run("normal, fulfilled by copy", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testFile2)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "src": "%s"}`,
+			p.fs.path(testFile2),
+			p.fs.path(testFile1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+		p.assert.Equal(testContent1, p.fs.file(testFile2).read())
+	}))
+
+	t.Run("deep file, fulfilled by copy", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1File1)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "src": "%s"}`,
+			p.fs.path(testDir1File1),
+			p.fs.path(testFile1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+		p.assert.Equal(testContent1, p.fs.file(testDir1File1).read())
+	}))
+
+	t.Run("two deep files, first one discarded, fulfilled by copy", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+		p.fs.file(testFile2).write(testContent1)
+
 		p.sess.addTask(taskf(
 			`{"dest": "%s", "precreate": true}`,
 			p.fs.path(testDir1File1)))
@@ -271,16 +390,19 @@ func TestPrecreate(t *testing.T) {
 			p.fs.path(testDir1File2)))
 
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "content_b64": "%s"}`,
+			`{"dest": "%s", "src": "%s"}`,
 			p.fs.path(testDir1File2),
-			b64String(testContent1)))
+			p.fs.path(testFile2)))
 
 		p.sess.finalize()
 
 		p.assert.Equal([]string{testFile2}, p.fs.dir(testDir1).ls())
 	}))
 
-	t.Run("two deep files, second one discarded", run(func(p *testpack) {
+	t.Run("two deep files, second one discarded, fulfilled by copy", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+		p.fs.file(testFile2).write(testContent1)
+
 		p.sess.addTask(taskf(
 			`{"dest": "%s", "precreate": true}`,
 			p.fs.path(testDir1File1)))
@@ -289,12 +411,68 @@ func TestPrecreate(t *testing.T) {
 			p.fs.path(testDir1File2)))
 
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "content_b64": "%s"}`,
+			`{"dest": "%s", "src": "%s"}`,
 			p.fs.path(testDir1File1),
-			b64String(testContent1)))
+			p.fs.path(testFile1)))
 
 		p.sess.finalize()
 
 		p.assert.Equal([]string{testFile1}, p.fs.dir(testDir1).ls())
+	}))
+
+	t.Run("two deep files with different levels, shallower one discarded, fulfilled by content", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+		p.fs.file(testFile2).write(testContent1)
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1File2)))
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1Dir1File1)))
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "src": "%s"}`,
+			p.fs.path(testDir1Dir1File1),
+			p.fs.path(testFile1)))
+
+		p.sess.finalize()
+
+		p.assert.Equal([]string{testFile1}, p.fs.dir(testDir1Dir1).ls())
+		p.assert.Equal([]string{testDir1}, p.fs.dir(testDir1).ls())
+	}))
+
+	t.Run("two deep files with different levels, deeper one discarded, fulfilled by content", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+		p.fs.file(testFile2).write(testContent1)
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1File2)))
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1Dir1File1)))
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "src": "%s"}`,
+			p.fs.path(testDir1File2),
+			p.fs.path(testFile2)))
+
+		p.sess.finalize()
+
+		p.assert.Equal([]string{testFile2}, p.fs.dir(testDir1).ls())
+	}))
+
+	t.Run("two deep files with different levels, both discarded", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1File2)))
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1Dir1File1)))
+
+		p.sess.finalize()
+
+		p.assert.Equal([]string{}, p.fs.dir(testRootDir).ls())
 	}))
 }

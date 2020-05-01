@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -59,6 +60,17 @@ func (f *testFS) dir(path string) *testDirectory {
 
 func b64String(content string) string {
 	return base64.StdEncoding.EncodeToString([]byte(testContent1))
+}
+
+func jsonSortedSlice(content string) []string {
+	data := []string{}
+	if err := json.Unmarshal([]byte(content), &data); err != nil {
+		log.Fatal(err)
+	}
+
+	sort.Strings(data)
+
+	return data
 }
 
 func taskf(format string, a ...interface{}) []byte {
@@ -511,60 +523,73 @@ func Test_Existence_Precreate(t *testing.T) {
 	}))
 }
 
-func Test_Precreate(t *testing.T) {
+func Test_ListDir(t *testing.T) {
 	t.Run("normal", run(func(p *testpack) {
+		p.fs.dir(testDir1).create()
+
 		res, err := p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
-			p.fs.path(testFile1)))
+			`{"dest": "%s", "listdir": true}`,
+			p.fs.path(testRootDir)))
 
 		p.assert.NoError(err)
-		p.assert.Equal(testResTrue, res)
+		p.assert.Equal([]string{testDir1}, jsonSortedSlice(res))
 	}))
 
-	t.Run("deep file", run(func(p *testpack) {
+	t.Run("empty", run(func(p *testpack) {
 		res, err := p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
-			p.fs.path(testDir1File1)))
+			`{"dest": "%s", "listdir": true}`,
+			p.fs.path(testRootDir)))
 
 		p.assert.NoError(err)
-		p.assert.Equal(testResTrue, res)
-		p.assert.Equal([]string{testDir1}, p.fs.dir(testRootDir).ls())
+		p.assert.Equal([]string{}, jsonSortedSlice(res))
 	}))
+}
 
-	t.Run("discarded new file", run(func(p *testpack) {
-		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
-			p.fs.path(testFile1)))
-
-		p.sess.finalize()
-
-		p.assert.Equal([]string{}, p.fs.dir(testRootDir).ls())
-	}))
-
-	t.Run("discarded existing file", run(func(p *testpack) {
+func Test_ListDir_Precreate(t *testing.T) {
+	t.Run("precreated new file is omitted", run(func(p *testpack) {
 		p.fs.file(testFile1).write(testContent1)
 
 		p.sess.addTask(taskf(
 			`{"dest": "%s", "precreate": true}`,
-			p.fs.path(testFile1)))
+			p.fs.path(testFile2)))
 
-		p.sess.finalize()
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "listdir": true}`,
+			p.fs.path(testRootDir)))
 
-		p.assert.Equal([]string{testFile1}, p.fs.dir(testRootDir).ls())
-		p.assert.Equal(testContent1, p.fs.file(testFile1).read())
+		p.assert.NoError(err)
+		p.assert.Equal([]string{testFile1}, jsonSortedSlice(res))
 	}))
 
-	t.Run("two deep files with different levels, both discarded", run(func(p *testpack) {
+	t.Run("precreated existing file isn't omitted", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+		p.fs.file(testFile2).write(testContent1)
+
 		p.sess.addTask(taskf(
 			`{"dest": "%s", "precreate": true}`,
-			p.fs.path(testDir1File2)))
+			p.fs.path(testFile1)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "listdir": true}`,
+			p.fs.path(testRootDir)))
+
+		p.assert.NoError(err)
+		p.assert.Equal([]string{testFile1, testFile2}, jsonSortedSlice(res))
+	}))
+
+	t.Run("precreated directory is omitted", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+
 		p.sess.addTask(taskf(
 			`{"dest": "%s", "precreate": true}`,
-			p.fs.path(testDir1Dir1File1)))
+			p.fs.path(testDir1File1)))
 
-		p.sess.finalize()
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "listdir": true}`,
+			p.fs.path(testRootDir)))
 
-		p.assert.Equal([]string{}, p.fs.dir(testRootDir).ls())
+		p.assert.NoError(err)
+		p.assert.Equal([]string{testFile1}, jsonSortedSlice(res))
 	}))
 }
 
@@ -666,5 +691,62 @@ func Test_Mkdir_Precreate(t *testing.T) {
 		p.sess.finalize()
 
 		p.assert.True(p.fs.dir(testFile1).exists())
+	}))
+}
+
+func Test_Precreate(t *testing.T) {
+	t.Run("normal", run(func(p *testpack) {
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testFile1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+	}))
+
+	t.Run("deep file", run(func(p *testpack) {
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1File1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+		p.assert.Equal([]string{testDir1}, p.fs.dir(testRootDir).ls())
+	}))
+
+	t.Run("discarded new file", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testFile1)))
+
+		p.sess.finalize()
+
+		p.assert.Equal([]string{}, p.fs.dir(testRootDir).ls())
+	}))
+
+	t.Run("discarded existing file", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testFile1)))
+
+		p.sess.finalize()
+
+		p.assert.Equal([]string{testFile1}, p.fs.dir(testRootDir).ls())
+		p.assert.Equal(testContent1, p.fs.file(testFile1).read())
+	}))
+
+	t.Run("two deep files with different levels, both discarded", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1File2)))
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1Dir1File1)))
+
+		p.sess.finalize()
+
+		p.assert.Equal([]string{}, p.fs.dir(testRootDir).ls())
 	}))
 }

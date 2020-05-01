@@ -121,6 +121,11 @@ func (d *testDirectory) create() {
 	}
 }
 
+func (d *testDirectory) exists() bool {
+	_, err := os.Stat(d.path)
+	return !os.IsNotExist(err)
+}
+
 type testpack struct {
 	t      *testing.T
 	assert *assert.Assertions
@@ -301,6 +306,7 @@ func Test_CopyFile_Precreate(t *testing.T) {
 		p.assert.Equal([]string{testFile2}, p.fs.dir(testDir1).ls())
 	}))
 }
+
 func Test_CreateFile(t *testing.T) {
 	t.Run("normal", run(func(p *testpack) {
 		res, err := p.sess.addTask(taskf(
@@ -559,5 +565,106 @@ func Test_Precreate(t *testing.T) {
 		p.sess.finalize()
 
 		p.assert.Equal([]string{}, p.fs.dir(testRootDir).ls())
+	}))
+}
+
+func Test_Mkdir(t *testing.T) {
+	t.Run("normal", run(func(p *testpack) {
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "mkdir": true}`,
+			p.fs.path(testDir1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+		p.assert.True(p.fs.dir(testDir1).exists())
+	}))
+
+	t.Run("already exists", run(func(p *testpack) {
+		p.fs.dir(testDir1).create()
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "mkdir": true}`,
+			p.fs.path(testDir1)))
+
+		p.assert.Error(err)
+		p.assert.Equal(testResFalse, res)
+	}))
+}
+
+func Test_Mkdir_Precreate(t *testing.T) {
+	t.Run("mkdir already precreated directory", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1File1)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "mkdir": true}`,
+			p.fs.path(testDir1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+		p.assert.True(p.fs.dir(testDir1).exists())
+	}))
+
+	t.Run("mkdir already precreated directory twice fails", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1File1)))
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "mkdir": true}`,
+			p.fs.path(testDir1)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "mkdir": true}`,
+			p.fs.path(testDir1)))
+
+		p.assert.Error(err)
+		p.assert.Equal(testResFalse, res)
+		p.assert.True(p.fs.dir(testDir1).exists())
+	}))
+
+	t.Run("already precreated directory persists after mkdir", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1File1)))
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "mkdir": true}`,
+			p.fs.path(testDir1)))
+
+		p.sess.finalize()
+
+		p.assert.True(p.fs.dir(testDir1).exists())
+	}))
+
+	t.Run("same name as precreated file", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testFile1)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "mkdir": true}`,
+			// The path looks like a file but is actually a directory.
+			p.fs.path(testFile1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+		p.assert.True(p.fs.dir(testFile1).exists())
+	}))
+
+	t.Run("directory of the same name as precreated file persists", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testFile1)))
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "mkdir": true}`,
+			// The path looks like a file but is actually a directory.
+			p.fs.path(testFile1)))
+
+		p.sess.finalize()
+
+		p.assert.True(p.fs.dir(testFile1).exists())
 	}))
 }

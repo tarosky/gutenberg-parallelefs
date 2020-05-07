@@ -31,10 +31,16 @@ type task struct {
 }
 
 type precreatedFile struct {
+	name   string
+	parent *dirTree
+	file   *futureFile
+	done   <-chan *futureFile
+}
+
+type futureFile struct {
 	file  *os.File
 	isNew bool
 	err   error
-	done  <-chan unit
 }
 
 const (
@@ -43,63 +49,33 @@ const (
 	valInvalid = "null"
 )
 
-func precreateFile(path string) *precreatedFile {
-	done := make(chan unit)
-
-	pf := &precreatedFile{
-		done: done,
+func (f *precreatedFile) getFutureFile() *futureFile {
+	if f.file == nil {
+		f.file = <-f.done
 	}
 
-	go func() {
-		dir := filepath.Dir(path)
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			if err := os.MkdirAll(dir, 0755); err != nil {
-				pf.err = err
-				done <- unit{}
-				close(done)
-				return
-			}
-		}
-
-		if file, err := os.OpenFile(path, os.O_WRONLY, 0666); err == nil {
-			pf.file = file
-			pf.isNew = false
-			done <- unit{}
-			close(done)
-			return
-		}
-
-		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0666)
-		if err != nil {
-			pf.err = err
-			done <- unit{}
-			close(done)
-			return
-		}
-
-		pf.file = file
-		pf.isNew = true
-		done <- unit{}
-		close(done)
-	}()
-
-	return pf
+	return f.file
 }
 
 func (f *precreatedFile) disposeUnused() error {
-	<-f.done
+	fut := f.getFutureFile()
+	if fut.err != nil {
+		log.Error(fut.err)
+		return nil
+	}
 
-	if f.isNew {
-		if err := os.Remove(f.file.Name()); err != nil {
+	if fut.isNew {
+		if err := os.Remove(fut.file.Name()); err != nil {
 			return err
 		}
 	}
 
-	return f.file.Close()
+	return fut.file.Close()
 }
 
 type dirTree struct {
-	children   map[string]*dirTree
+	childDirs  map[string]*dirTree
+	childFiles map[string]*precreatedFile
 	name       string
 	parent     *dirTree
 	precreated bool
@@ -108,31 +84,68 @@ type dirTree struct {
 
 func newDirTree(name string, parent *dirTree, precreated bool) *dirTree {
 	return &dirTree{
-		children:   map[string]*dirTree{},
+		childDirs:  map[string]*dirTree{},
+		childFiles: map[string]*precreatedFile{},
 		name:       name,
 		parent:     parent,
 		precreated: precreated,
 	}
 }
 
-func (t *dirTree) createChild(name string, precreate bool) (*dirTree, error) {
+func (t *dirTree) createDir(name string, precreate bool) (*dirTree, error) {
 	path := t.getPath() + name
 	stat, err := os.Stat(path)
 	if err != nil {
 		if err := os.Mkdir(path, 0755); err != nil {
 			return nil, err
 		}
-		t.children[name] = newDirTree(name, t, precreate)
-		return t.children[name], nil
+		t.childDirs[name] = newDirTree(name, t, precreate)
+		return t.childDirs[name], nil
 	}
 
 	if stat.IsDir() {
-		t.children[name] = newDirTree(name, t, false)
-		return t.children[name], nil
+		t.childDirs[name] = newDirTree(name, t, false)
+		return t.childDirs[name], nil
 	}
 
 	return nil, fmt.Errorf(
 		"cannot create directory: file already exists: %s", path)
+}
+
+func (t *dirTree) precreateFile(name string) *precreatedFile {
+	path := t.getPath() + name
+	done := make(chan *futureFile)
+
+	pf := &precreatedFile{
+		done: done,
+	}
+
+	go func() {
+		defer close(done)
+
+		if file, err := os.OpenFile(path, os.O_WRONLY, 0666); err == nil {
+			done <- &futureFile{
+				file:  file,
+				isNew: false,
+			}
+			return
+		}
+
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0666)
+		if err != nil {
+			done <- &futureFile{
+				err: err,
+			}
+			return
+		}
+
+		done <- &futureFile{
+			file:  file,
+			isNew: true,
+		}
+	}()
+
+	return pf
 }
 
 // getPath returns the dir path with a trailing slash.
@@ -150,53 +163,50 @@ func (t *dirTree) getPath() string {
 	return *t.pathCache
 }
 
-func (t *dirTree) registerDir(absDirPath string, precreated bool) (*dirTree, error) {
-	if absDirPath[0] != '/' {
-		log.Fatalf("path must be absolute: %s", absDirPath)
-	}
-
-	// Root directory
-	if len(absDirPath) == 1 {
-		return t, nil
-	}
-
-	return t.registerDirInternal(strings.Split(absDirPath[1:], "/"), precreated)
-}
-
 func (t *dirTree) registerDirInternal(dirParts []string, precreated bool) (*dirTree, error) {
 	if len(dirParts) == 0 {
 		log.Fatalf("dirParts must contain at least one element")
 	}
 
 	if len(dirParts) == 1 {
-		child, ok := t.children[dirParts[0]]
+		dir, ok := t.childDirs[dirParts[0]]
 		if !ok {
-			t.children[dirParts[0]] = newDirTree(dirParts[0], t, precreated)
-			return t.children[dirParts[0]], nil
+			t.childDirs[dirParts[0]] = newDirTree(dirParts[0], t, precreated)
+			return t.childDirs[dirParts[0]], nil
 		}
-		return nil, fmt.Errorf("directory already registered: %s", child.getPath())
+		return nil, fmt.Errorf("directory already registered: %s", dir.getPath())
 	}
 
-	if _, ok := t.children[dirParts[0]]; !ok {
-		t.children[dirParts[0]] = newDirTree(dirParts[0], t, false)
+	if _, ok := t.childDirs[dirParts[0]]; !ok {
+		t.childDirs[dirParts[0]] = newDirTree(dirParts[0], t, false)
 	}
 
-	return t.children[dirParts[0]].registerDirInternal(dirParts[1:], precreated)
+	return t.childDirs[dirParts[0]].registerDirInternal(dirParts[1:], precreated)
 }
 
-func (t *dirTree) mkDir(absDirPath string) error {
-	if absDirPath[0] != '/' {
-		log.Fatalf("path must be absolute: %s", absDirPath)
+func (t *dirTree) addFileInternal(pathParts []string) (*precreatedFile, error) {
+	if len(pathParts) < 1 {
+		log.Fatalf("pathParts must contain at least one element")
 	}
 
-	// Root directory
-	if len(absDirPath) == 1 {
-		return fmt.Errorf(
-			"cannot mkdir directory: already exists: %s",
-			absDirPath)
+	if len(pathParts) == 1 {
+		file, ok := t.childFiles[pathParts[0]]
+		if !ok {
+			return t.precreateFile(pathParts[0]), nil
+		}
+		return file, nil
 	}
 
-	return t.mkDirInternal(strings.Split(absDirPath[1:], "/"))
+	dir, ok := t.childDirs[pathParts[0]]
+	if !ok {
+		var err error
+		dir, err = t.createDir(pathParts[0], true)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return dir.addFileInternal(pathParts[1:])
 }
 
 func (t *dirTree) mkDirInternal(dirParts []string) error {
@@ -208,34 +218,21 @@ func (t *dirTree) mkDirInternal(dirParts []string) error {
 		return fmt.Errorf("parent directory doesn't exist")
 	}
 
-	child, ok := t.children[dirParts[0]]
+	dir, ok := t.childDirs[dirParts[0]]
 	if !ok {
 		path := t.getPath() + filepath.Join(strings.Join(dirParts, "/"))
 		return os.Mkdir(path, 0755)
 	}
 
 	if len(dirParts) == 1 {
-		if child.precreated {
-			child.precreated = false
+		if dir.precreated {
+			dir.precreated = false
 			return nil
 		}
 		return fmt.Errorf("directory already exists")
 	}
 
-	return child.mkDirInternal(dirParts[1:])
-}
-
-func (t *dirTree) ensureDir(absDirPath string, precreate bool) (*dirTree, error) {
-	if absDirPath[0] != '/' {
-		log.Fatalf("path must be absolute: %s", absDirPath)
-	}
-
-	// Root directory
-	if len(absDirPath) == 1 {
-		return t, nil
-	}
-
-	return t.ensureDirInternal(strings.Split(absDirPath[1:], "/"), precreate)
+	return dir.mkDirInternal(dirParts[1:])
 }
 
 func (t *dirTree) ensureDirInternal(dirParts []string, precreate bool) (*dirTree, error) {
@@ -243,28 +240,28 @@ func (t *dirTree) ensureDirInternal(dirParts []string, precreate bool) (*dirTree
 		log.Fatalf("dirParts must contain at least one element")
 	}
 
-	child, ok := t.children[dirParts[0]]
+	dir, ok := t.childDirs[dirParts[0]]
 	if !ok {
 		var err error
-		child, err = t.createChild(dirParts[0], precreate)
+		dir, err = t.createDir(dirParts[0], precreate)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		child.precreated = child.precreated && precreate
+		dir.precreated = dir.precreated && precreate
 	}
 
 	if len(dirParts) < 2 {
-		return child, nil
+		return dir, nil
 	}
 
-	return child.ensureDirInternal(dirParts[1:], precreate)
+	return dir.ensureDirInternal(dirParts[1:], precreate)
 }
 
 func (t *dirTree) clean() error {
 	eg := &errgroup.Group{}
 
-	for _, c := range t.children {
+	for _, c := range t.childDirs {
 		c := c
 		eg.Go(c.clean)
 	}
@@ -298,39 +295,25 @@ func (t *dirTree) clean() error {
 	return nil
 }
 
-func (t *dirTree) find(absDirPath string) *dirTree {
-	if absDirPath[0] != '/' {
-		log.Fatalf("path must be absolute: %s", absDirPath)
-	}
-
-	// Root directory
-	if len(absDirPath) == 1 {
-		return t
-	}
-
-	return t.findInternal(strings.Split(absDirPath[1:], "/"))
-}
-
-func (t *dirTree) findInternal(dirParts []string) *dirTree {
+func (t *dirTree) findDirInternal(dirParts []string) *dirTree {
 	if len(dirParts) == 0 {
 		log.Fatalf("dirParts must contain at least one element")
 	}
 
-	child, ok := t.children[dirParts[0]]
+	dir, ok := t.childDirs[dirParts[0]]
 	if !ok {
 		return nil
 	}
 
 	if len(dirParts) == 1 {
-		return child
+		return dir
 	}
 
-	return child.findInternal(dirParts[1:])
+	return dir.findDirInternal(dirParts[1:])
 }
 
 type session struct {
 	openFiles         []*os.File
-	precreatedFileMap map[string]*precreatedFile
 	finalizeMux       *sync.Mutex
 	finalized         bool
 	precreatedDirTree *dirTree
@@ -356,7 +339,6 @@ func (c *content) UnmarshalJSON(data []byte) error {
 func newSession() *session {
 	return &session{
 		openFiles:         make([]*os.File, 0),
-		precreatedFileMap: map[string]*precreatedFile{},
 		finalizeMux:       &sync.Mutex{},
 		finalized:         false,
 		precreatedDirTree: newDirTree("", nil, false),
@@ -390,7 +372,7 @@ func (s *session) addTask(input []byte) (string, error) {
 			log.Debugf("precreateDirs took %s", time.Since(start))
 		}()
 
-		_, err := s.precreatedDirTree.ensureDir(filepath.Dir(path), true)
+		_, err := s.ensurePrecreatedDir(filepath.Dir(path), true)
 		return err
 	}
 
@@ -493,16 +475,11 @@ func (s *session) deleteSingle(path string) (bool, error) {
 }
 
 func (s *session) delete(path string, recursive bool) (bool, error) {
-	if f, ok := s.precreatedFileMap[path]; ok {
-		<-f.done
-		if f.isNew {
-			return false, nil
-		}
-		f.isNew = true
-		return true, nil
+	if f := s.findPrecreatedFile(path); f != nil {
+		return !f.getFutureFile().isNew, nil
 	}
 
-	if t := s.precreatedDirTree.find(path); t != nil {
+	if t := s.findPrecreatedDir(path); t != nil {
 		if t.precreated {
 			return false, nil
 		}
@@ -581,9 +558,8 @@ func (s *session) delete(path string, recursive bool) (bool, error) {
 	precreatedFileExists := false
 	unmanagedFileExists := false
 	for _, n := range names {
-		if f, ok := s.precreatedFileMap[path+"/"+n]; ok {
-			<-f.done
-			if f.isNew {
+		if f := s.findPrecreatedFile(path + "/" + n); f != nil {
+			if f.getFutureFile().isNew {
 				precreatedFileExists = true
 			}
 		} else {
@@ -614,7 +590,7 @@ func (s *session) delete(path string, recursive bool) (bool, error) {
 		}
 
 		if precreatedFileExists {
-			if _, err := s.precreatedDirTree.registerDir(path, true); err != nil {
+			if _, err := s.registerPrecreatedDir(path, true); err != nil {
 				return false, err
 			}
 
@@ -633,7 +609,7 @@ func (s *session) delete(path string, recursive bool) (bool, error) {
 			return false, nil
 		}
 
-		if _, err := s.precreatedDirTree.registerDir(path, true); err != nil {
+		if _, err := s.registerPrecreatedDir(path, true); err != nil {
 			return false, err
 		}
 
@@ -667,7 +643,7 @@ func (s *session) listDir(dirPath string) ([]string, error) {
 	resNames := make([]string, 0, len(names))
 	for _, n := range names {
 		path := dirPath + "/" + n
-		if t := s.precreatedDirTree.find(path); t != nil {
+		if t := s.findPrecreatedDir(path); t != nil {
 			if t.precreated {
 				continue
 			}
@@ -675,9 +651,8 @@ func (s *session) listDir(dirPath string) ([]string, error) {
 			continue
 		}
 
-		if f, ok := s.precreatedFileMap[path]; ok {
-			<-f.done
-			if f.isNew {
+		if f := s.findPrecreatedFile(path); f != nil {
+			if f.getFutureFile().isNew {
 				continue
 			}
 			resNames = append(resNames, n)
@@ -697,7 +672,7 @@ func (s *session) mkdir(destPath string) error {
 		log.Debugf("mkdir took %s", time.Since(start))
 	}()
 
-	return s.precreatedDirTree.mkDir(destPath)
+	return s.mkPrecreatedDir(destPath)
 }
 
 func (s *session) existence(destPath string) bool {
@@ -706,12 +681,11 @@ func (s *session) existence(destPath string) bool {
 		log.Debugf("existence took %s", time.Since(start))
 	}()
 
-	if f, ok := s.precreatedFileMap[destPath]; ok {
-		<-f.done
-		return !f.isNew
+	if f := s.findPrecreatedFile(destPath); f != nil {
+		return !f.getFutureFile().isNew
 	}
 
-	if t := s.precreatedDirTree.find(destPath); t != nil {
+	if t := s.findPrecreatedDir(destPath); t != nil {
 		return !t.precreated
 	}
 
@@ -725,11 +699,13 @@ func (s *session) precreateFile(destPath string) error {
 		log.Debugf("precreateFile took %s", time.Since(start))
 	}()
 
-	if _, ok := s.precreatedFileMap[destPath]; ok {
+	if s.findPrecreatedFile(destPath) != nil {
 		return nil
 	}
 
-	s.precreatedFileMap[destPath] = precreateFile(destPath)
+	if _, err := s.addPrecreatedFile(destPath); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -741,17 +717,20 @@ func (s *session) copyFile(srcPath, destPath string) (string, error) {
 			log.Debugf("createDest took %s", time.Since(start))
 		}()
 
-		if pf, ok := s.precreatedFileMap[destPath]; ok {
+		if pf := s.findPrecreatedFile(destPath); pf != nil {
 			log.Debugf("precreated file found at: %s", destPath)
 
-			delete(s.precreatedFileMap, destPath)
-
-			<-pf.done
-			if err := pf.err; err != nil {
+			if _, err := s.ensurePrecreatedDir(destPath, false); err != nil {
 				return nil, err
 			}
+			delete(pf.parent.childFiles, pf.name)
 
-			return pf.file, nil
+			fut := pf.getFutureFile()
+			if fut.err != nil {
+				return nil, fut.err
+			}
+
+			return fut.file, nil
 		}
 
 		log.Debug("precreated file not found")
@@ -913,4 +892,90 @@ func (s *session) done() {
 	for _, pf := range s.precreatedFileMap {
 		<-pf.done
 	}
+}
+
+func (s *session) ensurePrecreatedDir(absDirPath string, precreate bool) (*dirTree, error) {
+	if absDirPath[0] != '/' {
+		log.Fatalf("path must be absolute: %s", absDirPath)
+	}
+
+	// Root directory
+	if len(absDirPath) == 1 {
+		return s.precreatedDirTree, nil
+	}
+
+	return s.precreatedDirTree.ensureDirInternal(strings.Split(absDirPath[1:], "/"), precreate)
+}
+
+func (s *session) mkPrecreatedDir(absDirPath string) error {
+	if absDirPath[0] != '/' {
+		log.Fatalf("path must be absolute: %s", absDirPath)
+	}
+
+	// Root directory
+	if len(absDirPath) == 1 {
+		return fmt.Errorf(
+			"cannot mkdir directory: already exists: %s",
+			absDirPath)
+	}
+
+	return s.precreatedDirTree.mkDirInternal(strings.Split(absDirPath[1:], "/"))
+}
+
+func (s *session) registerPrecreatedDir(absDirPath string, precreated bool) (*dirTree, error) {
+	if absDirPath[0] != '/' {
+		log.Fatalf("path must be absolute: %s", absDirPath)
+	}
+
+	// Root directory
+	if len(absDirPath) == 1 {
+		return s.precreatedDirTree, nil
+	}
+
+	return s.precreatedDirTree.registerDirInternal(strings.Split(absDirPath[1:], "/"), precreated)
+}
+
+func (s *session) findPrecreatedDir(absDirPath string) *dirTree {
+	if absDirPath[0] != '/' {
+		log.Fatalf("path must be absolute: %s", absDirPath)
+	}
+
+	// Root directory
+	if len(absDirPath) == 1 {
+		return s.precreatedDirTree
+	}
+
+	return s.precreatedDirTree.findDirInternal(strings.Split(absDirPath[1:], "/"))
+}
+
+func (s *session) addPrecreatedFile(absPath string) (*precreatedFile, error) {
+	if absPath[0] != '/' {
+		log.Fatalf("path must be absolute: %s", absPath)
+	}
+
+	// Root directory
+	if len(absPath) == 1 {
+		return nil, fmt.Errorf("directory already exists: %s", absPath)
+	}
+
+	return s.precreatedDirTree.addFileInternal(strings.Split(absPath[1:], "/"))
+}
+
+func (s *session) findPrecreatedFile(absPath string) *precreatedFile {
+	name := filepath.Base(absPath)
+	if name == "/" {
+		return nil
+	}
+
+	dir := s.findPrecreatedDir(filepath.Dir(absPath))
+	if dir == nil {
+		return nil
+	}
+
+	file, ok := dir.childFiles[name]
+	if !ok {
+		return nil
+	}
+
+	return file
 }

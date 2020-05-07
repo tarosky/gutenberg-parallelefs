@@ -576,6 +576,34 @@ func Test_DeleteRecursive_Precreate(t *testing.T) {
 		p.sess.done()
 		p.assert.True(p.fs.file(testDir1File1).exists())
 	}))
+
+	t.Run("precreated file included", run(func(p *testpack) {
+		p.fs.dir(testDir1).create()
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1File1)))
+
+		{
+			res, err := p.sess.addTask(taskf(
+				`{"dest": "%s", "delete_recursive": true}`,
+				p.fs.path(testDir1)))
+
+			p.assert.NoError(err)
+			p.assert.Equal(testResTrue, res)
+
+			p.sess.done()
+			p.assert.True(p.fs.file(testDir1File1).exists())
+		}
+		{
+			res, err := p.sess.addTask(taskf(
+				`{"dest": "%s", "mkdir": true}`,
+				p.fs.path(testDir1)))
+
+			p.assert.NoError(err)
+			p.assert.Equal(testResTrue, res)
+		}
+	}))
 }
 
 func Test_Existence(t *testing.T) {

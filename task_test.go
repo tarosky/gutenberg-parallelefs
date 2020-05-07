@@ -102,6 +102,11 @@ func (f *testFile) write(content string) {
 	}
 }
 
+func (f *testFile) exists() bool {
+	_, err := os.Stat(f.path)
+	return !os.IsNotExist(err)
+}
+
 type testDirectory struct {
 	path string
 }
@@ -172,7 +177,7 @@ func run(test func(*testpack)) func(*testing.T) {
 }
 
 func Test_CopyFile(t *testing.T) {
-	t.Run("normal", run(func(p *testpack) {
+	t.Run("typical", run(func(p *testpack) {
 		p.fs.file(testFile2).write(testContent1)
 
 		res, err := p.sess.addTask(taskf(
@@ -182,6 +187,7 @@ func Test_CopyFile(t *testing.T) {
 
 		p.assert.NoError(err)
 		p.assert.Equal(testResTrue, res)
+
 		p.assert.Equal(testContent1, p.fs.file(testFile1).read())
 	}))
 
@@ -199,7 +205,7 @@ func Test_CopyFile(t *testing.T) {
 }
 
 func Test_CopyFile_Precreate(t *testing.T) {
-	t.Run("normal, fulfilled by copy", run(func(p *testpack) {
+	t.Run("typical, fulfilled by copy", run(func(p *testpack) {
 		p.fs.file(testFile1).write(testContent1)
 
 		p.sess.addTask(taskf(
@@ -213,6 +219,7 @@ func Test_CopyFile_Precreate(t *testing.T) {
 
 		p.assert.NoError(err)
 		p.assert.Equal(testResTrue, res)
+
 		p.assert.Equal(testContent1, p.fs.file(testFile2).read())
 	}))
 
@@ -230,6 +237,7 @@ func Test_CopyFile_Precreate(t *testing.T) {
 
 		p.assert.NoError(err)
 		p.assert.Equal(testResTrue, res)
+
 		p.assert.Equal(testContent1, p.fs.file(testDir1File1).read())
 	}))
 
@@ -320,7 +328,7 @@ func Test_CopyFile_Precreate(t *testing.T) {
 }
 
 func Test_CreateFile(t *testing.T) {
-	t.Run("normal", run(func(p *testpack) {
+	t.Run("typical", run(func(p *testpack) {
 		res, err := p.sess.addTask(taskf(
 			`{"dest": "%s", "content_b64": "%s"}`,
 			p.fs.path(testFile1),
@@ -328,6 +336,8 @@ func Test_CreateFile(t *testing.T) {
 
 		p.assert.NoError(err)
 		p.assert.Equal(testResTrue, res)
+
+		p.sess.done()
 		p.assert.Equal(testContent1, p.fs.file(testFile1).read())
 	}))
 
@@ -343,7 +353,7 @@ func Test_CreateFile(t *testing.T) {
 }
 
 func Test_CreateFile_Precreate(t *testing.T) {
-	t.Run("normal, fulfilled by content", run(func(p *testpack) {
+	t.Run("typical, fulfilled by content", run(func(p *testpack) {
 		p.sess.addTask(taskf(
 			`{"dest": "%s", "precreate": true}`,
 			p.fs.path(testFile1)))
@@ -355,6 +365,7 @@ func Test_CreateFile_Precreate(t *testing.T) {
 
 		p.assert.NoError(err)
 		p.assert.Equal(testResTrue, res)
+
 		p.assert.Equal(testContent1, p.fs.file(testFile1).read())
 	}))
 
@@ -370,6 +381,7 @@ func Test_CreateFile_Precreate(t *testing.T) {
 
 		p.assert.NoError(err)
 		p.assert.Equal(testResTrue, res)
+
 		p.assert.Equal(testContent1, p.fs.file(testDir1File1).read())
 	}))
 
@@ -445,6 +457,125 @@ func Test_CreateFile_Precreate(t *testing.T) {
 
 	// 	p.assert.Equal([]string{testFile2}, p.fs.dir(testDir1).ls())
 	// }))
+}
+
+func Test_Delete_Precreate(t *testing.T) {
+	t.Run("typical", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testFile1)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "delete": true}`,
+			p.fs.path(testFile1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResFalse, res)
+
+		p.sess.done()
+		p.assert.True(p.fs.file(testFile1).exists())
+	}))
+
+	t.Run("precreated directory", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1File1)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "delete": true}`,
+			p.fs.path(testDir1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResFalse, res)
+
+		p.sess.done()
+		p.assert.True(p.fs.file(testDir1).exists())
+	}))
+}
+
+func Test_DeleteRecursive(t *testing.T) {
+	t.Run("typical", run(func(p *testpack) {
+		p.fs.dir(testDir1).create()
+		p.fs.file(testDir1File1).write(testContent1)
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "delete_recursive": true}`,
+			p.fs.path(testDir1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.assert.False(p.fs.file(testDir1File1).exists())
+	}))
+
+	t.Run("file", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "delete_recursive": true}`,
+			p.fs.path(testFile1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.assert.False(p.fs.file(testFile1).exists())
+	}))
+
+	t.Run("empty directory", run(func(p *testpack) {
+		p.fs.dir(testDir1).create()
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "delete_recursive": true}`,
+			p.fs.path(testDir1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.assert.False(p.fs.dir(testDir1).exists())
+	}))
+
+	t.Run("inexistent", run(func(p *testpack) {
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "delete_recursive": true}`,
+			p.fs.path(testFile1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResFalse, res)
+	}))
+}
+
+func Test_DeleteRecursive_Precreate(t *testing.T) {
+	t.Run("typical", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1File1)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "delete_recursive": true}`,
+			p.fs.path(testDir1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResFalse, res)
+
+		p.sess.done()
+		p.assert.True(p.fs.file(testDir1File1).exists())
+	}))
+
+	t.Run("precreated file", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "precreate": true}`,
+			p.fs.path(testDir1File1)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "delete_recursive": true}`,
+			p.fs.path(testDir1File1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResFalse, res)
+
+		p.sess.done()
+		p.assert.True(p.fs.file(testDir1File1).exists())
+	}))
 }
 
 func Test_Existence(t *testing.T) {
@@ -524,7 +655,7 @@ func Test_Existence_Precreate(t *testing.T) {
 }
 
 func Test_ListDir(t *testing.T) {
-	t.Run("normal", run(func(p *testpack) {
+	t.Run("typical", run(func(p *testpack) {
 		p.fs.dir(testDir1).create()
 
 		res, err := p.sess.addTask(taskf(
@@ -594,13 +725,15 @@ func Test_ListDir_Precreate(t *testing.T) {
 }
 
 func Test_Mkdir(t *testing.T) {
-	t.Run("normal", run(func(p *testpack) {
+	t.Run("typical", run(func(p *testpack) {
 		res, err := p.sess.addTask(taskf(
 			`{"dest": "%s", "mkdir": true}`,
 			p.fs.path(testDir1)))
 
 		p.assert.NoError(err)
 		p.assert.Equal(testResTrue, res)
+
+		p.sess.done()
 		p.assert.True(p.fs.dir(testDir1).exists())
 	}))
 
@@ -628,6 +761,8 @@ func Test_Mkdir_Precreate(t *testing.T) {
 
 		p.assert.NoError(err)
 		p.assert.Equal(testResTrue, res)
+
+		p.sess.done()
 		p.assert.True(p.fs.dir(testDir1).exists())
 	}))
 
@@ -646,6 +781,8 @@ func Test_Mkdir_Precreate(t *testing.T) {
 
 		p.assert.Error(err)
 		p.assert.Equal(testResFalse, res)
+
+		p.sess.done()
 		p.assert.True(p.fs.dir(testDir1).exists())
 	}))
 
@@ -675,6 +812,8 @@ func Test_Mkdir_Precreate(t *testing.T) {
 
 		p.assert.NoError(err)
 		p.assert.Equal(testResTrue, res)
+
+		p.sess.done()
 		p.assert.True(p.fs.dir(testFile1).exists())
 	}))
 
@@ -695,13 +834,16 @@ func Test_Mkdir_Precreate(t *testing.T) {
 }
 
 func Test_Precreate(t *testing.T) {
-	t.Run("normal", run(func(p *testpack) {
+	t.Run("typical", run(func(p *testpack) {
 		res, err := p.sess.addTask(taskf(
 			`{"dest": "%s", "precreate": true}`,
 			p.fs.path(testFile1)))
 
 		p.assert.NoError(err)
 		p.assert.Equal(testResTrue, res)
+
+		p.sess.done()
+		p.assert.True(p.fs.file(testFile1).exists())
 	}))
 
 	t.Run("deep file", run(func(p *testpack) {
@@ -712,6 +854,9 @@ func Test_Precreate(t *testing.T) {
 		p.assert.NoError(err)
 		p.assert.Equal(testResTrue, res)
 		p.assert.Equal([]string{testDir1}, p.fs.dir(testRootDir).ls())
+
+		p.sess.done()
+		p.assert.True(p.fs.file(testDir1File1).exists())
 	}))
 
 	t.Run("discarded new file", run(func(p *testpack) {

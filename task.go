@@ -908,3 +908,9 @@ func (s *session) finalize() {
 		log.Error(err)
 	}
 }
+
+func (s *session) done() {
+	for _, pf := range s.precreatedFileMap {
+		<-pf.done
+	}
+}

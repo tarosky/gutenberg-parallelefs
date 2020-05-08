@@ -163,29 +163,6 @@ func (t *dirTree) getPath() string {
 	return *t.pathCache
 }
 
-func (t *dirTree) registerDirInternal(dirParts []string, speculative bool) (*dirTree, error) {
-	if len(dirParts) == 0 {
-		log.Fatalf("dirParts must contain at least one element")
-	}
-
-	name := dirParts[0]
-
-	if len(dirParts) == 1 {
-		dir, ok := t.childDirs[name]
-		if !ok {
-			t.childDirs[name] = newDirTree(name, t, speculative)
-			return t.childDirs[name], nil
-		}
-		return nil, fmt.Errorf("directory already registered: %s", dir.getPath())
-	}
-
-	if _, ok := t.childDirs[name]; !ok {
-		t.childDirs[name] = newDirTree(name, t, false)
-	}
-
-	return t.childDirs[name].registerDirInternal(dirParts[1:], speculative)
-}
-
 func (t *dirTree) addFileInternal(pathParts []string) (*speculativeFile, error) {
 	if len(pathParts) < 1 {
 		log.Fatalf("pathParts must contain at least one element")
@@ -889,19 +866,6 @@ func (s *session) mkSpeculativeDir(absDirPath string) error {
 	}
 
 	return s.speculativeDirTree.mkDirInternal(strings.Split(absDirPath[1:], "/"))
-}
-
-func (s *session) registerSpeculativeDir(absDirPath string, speculative bool) (*dirTree, error) {
-	if absDirPath[0] != '/' {
-		log.Fatalf("path must be absolute: %s", absDirPath)
-	}
-
-	// Root directory
-	if len(absDirPath) == 1 {
-		return s.speculativeDirTree, nil
-	}
-
-	return s.speculativeDirTree.registerDirInternal(strings.Split(absDirPath[1:], "/"), speculative)
 }
 
 func (s *session) findSpeculativeDir(absDirPath string) *dirTree {

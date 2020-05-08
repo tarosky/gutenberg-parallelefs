@@ -204,12 +204,12 @@ func Test_CopyFile(t *testing.T) {
 	}))
 }
 
-func Test_CopyFile_Precreate(t *testing.T) {
+func Test_CopyFile_Speculate(t *testing.T) {
 	t.Run("typical, fulfilled by copy", run(func(p *testpack) {
 		p.fs.file(testFile1).write(testContent1)
 
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testFile2)))
 
 		res, err := p.sess.addTask(taskf(
@@ -227,7 +227,7 @@ func Test_CopyFile_Precreate(t *testing.T) {
 		p.fs.file(testFile1).write(testContent1)
 
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
 
 		res, err := p.sess.addTask(taskf(
@@ -246,10 +246,10 @@ func Test_CopyFile_Precreate(t *testing.T) {
 		p.fs.file(testFile2).write(testContent1)
 
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File2)))
 
 		p.sess.addTask(taskf(
@@ -267,10 +267,10 @@ func Test_CopyFile_Precreate(t *testing.T) {
 		p.fs.file(testFile2).write(testContent1)
 
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File2)))
 
 		p.sess.addTask(taskf(
@@ -288,10 +288,10 @@ func Test_CopyFile_Precreate(t *testing.T) {
 		p.fs.file(testFile2).write(testContent1)
 
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File2)))
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1Dir1File1)))
 
 		p.sess.addTask(taskf(
@@ -310,10 +310,10 @@ func Test_CopyFile_Precreate(t *testing.T) {
 		p.fs.file(testFile2).write(testContent1)
 
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File2)))
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1Dir1File1)))
 
 		p.sess.addTask(taskf(
@@ -352,10 +352,10 @@ func Test_CreateFile(t *testing.T) {
 	}))
 }
 
-func Test_CreateFile_Precreate(t *testing.T) {
+func Test_CreateFile_Speculate(t *testing.T) {
 	t.Run("typical, fulfilled by content", run(func(p *testpack) {
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testFile1)))
 
 		res, err := p.sess.addTask(taskf(
@@ -371,7 +371,7 @@ func Test_CreateFile_Precreate(t *testing.T) {
 
 	t.Run("deep file, fulfilled by content", run(func(p *testpack) {
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
 
 		res, err := p.sess.addTask(taskf(
@@ -385,78 +385,78 @@ func Test_CreateFile_Precreate(t *testing.T) {
 		p.assert.Equal(testContent1, p.fs.file(testDir1File1).read())
 	}))
 
-	// t.Run("two deep files, first one discarded, fulfilled by content", run(func(p *testpack) {
-	// 	p.sess.addTask(taskf(
-	// 		`{"dest": "%s", "precreate": true}`,
-	// 		p.fs.path(testDir1File1)))
-	// 	p.sess.addTask(taskf(
-	// 		`{"dest": "%s", "precreate": true}`,
-	// 		p.fs.path(testDir1File2)))
+	t.Run("two deep files, first one discarded, fulfilled by content", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true}`,
+			p.fs.path(testDir1File1)))
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true}`,
+			p.fs.path(testDir1File2)))
 
-	// 	p.sess.addTask(taskf(
-	// 		`{"dest": "%s", "content_b64": "%s"}`,
-	// 		p.fs.path(testDir1File2),
-	// 		b64String(testContent1)))
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "content_b64": "%s"}`,
+			p.fs.path(testDir1File2),
+			b64String(testContent1)))
 
-	// 	p.sess.finalize()
+		p.sess.finalize()
 
-	// 	p.assert.Equal([]string{testFile2}, p.fs.dir(testDir1).ls())
-	// }))
+		p.assert.Equal([]string{testFile2}, p.fs.dir(testDir1).ls())
+	}))
 
-	// t.Run("two deep files, second one discarded, fulfilled by content", run(func(p *testpack) {
-	// 	p.sess.addTask(taskf(
-	// 		`{"dest": "%s", "precreate": true}`,
-	// 		p.fs.path(testDir1File1)))
-	// 	p.sess.addTask(taskf(
-	// 		`{"dest": "%s", "precreate": true}`,
-	// 		p.fs.path(testDir1File2)))
+	t.Run("two deep files, second one discarded, fulfilled by content", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true}`,
+			p.fs.path(testDir1File1)))
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true}`,
+			p.fs.path(testDir1File2)))
 
-	// 	p.sess.addTask(taskf(
-	// 		`{"dest": "%s", "content_b64": "%s"}`,
-	// 		p.fs.path(testDir1File1),
-	// 		b64String(testContent1)))
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "content_b64": "%s"}`,
+			p.fs.path(testDir1File1),
+			b64String(testContent1)))
 
-	// 	p.sess.finalize()
+		p.sess.finalize()
 
-	// 	p.assert.Equal([]string{testFile1}, p.fs.dir(testDir1).ls())
-	// }))
+		p.assert.Equal([]string{testFile1}, p.fs.dir(testDir1).ls())
+	}))
 
-	// t.Run("two deep files with different levels, shallower one discarded, fulfilled by content", run(func(p *testpack) {
-	// 	p.sess.addTask(taskf(
-	// 		`{"dest": "%s", "precreate": true}`,
-	// 		p.fs.path(testDir1File2)))
-	// 	p.sess.addTask(taskf(
-	// 		`{"dest": "%s", "precreate": true}`,
-	// 		p.fs.path(testDir1Dir1File1)))
+	t.Run("two deep files with different levels, shallower one discarded, fulfilled by content", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true}`,
+			p.fs.path(testDir1File2)))
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true}`,
+			p.fs.path(testDir1Dir1File1)))
 
-	// 	p.sess.addTask(taskf(
-	// 		`{"dest": "%s", "content_b64": "%s"}`,
-	// 		p.fs.path(testDir1Dir1File1),
-	// 		b64String(testContent1)))
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "content_b64": "%s"}`,
+			p.fs.path(testDir1Dir1File1),
+			b64String(testContent1)))
 
-	// 	p.sess.finalize()
+		p.sess.finalize()
 
-	// 	p.assert.Equal([]string{testFile1}, p.fs.dir(testDir1Dir1).ls())
-	// 	p.assert.Equal([]string{testDir1}, p.fs.dir(testDir1).ls())
-	// }))
+		p.assert.Equal([]string{testFile1}, p.fs.dir(testDir1Dir1).ls())
+		p.assert.Equal([]string{testDir1}, p.fs.dir(testDir1).ls())
+	}))
 
-	// t.Run("two deep files with different levels, deeper one discarded, fulfilled by content", run(func(p *testpack) {
-	// 	p.sess.addTask(taskf(
-	// 		`{"dest": "%s", "precreate": true}`,
-	// 		p.fs.path(testDir1File2)))
-	// 	p.sess.addTask(taskf(
-	// 		`{"dest": "%s", "precreate": true}`,
-	// 		p.fs.path(testDir1Dir1File1)))
+	t.Run("two deep files with different levels, deeper one discarded, fulfilled by content", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true}`,
+			p.fs.path(testDir1File2)))
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true}`,
+			p.fs.path(testDir1Dir1File1)))
 
-	// 	p.sess.addTask(taskf(
-	// 		`{"dest": "%s", "content_b64": "%s"}`,
-	// 		p.fs.path(testDir1File2),
-	// 		b64String(testContent1)))
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "content_b64": "%s"}`,
+			p.fs.path(testDir1File2),
+			b64String(testContent1)))
 
-	// 	p.sess.finalize()
+		p.sess.finalize()
 
-	// 	p.assert.Equal([]string{testFile2}, p.fs.dir(testDir1).ls())
-	// }))
+		p.assert.Equal([]string{testFile2}, p.fs.dir(testDir1).ls())
+	}))
 }
 
 func Test_Delete(t *testing.T) {
@@ -504,10 +504,10 @@ func Test_Delete(t *testing.T) {
 	}))
 }
 
-func Test_Delete_Precreate(t *testing.T) {
+func Test_Delete_Speculate(t *testing.T) {
 	t.Run("typical", run(func(p *testpack) {
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testFile1)))
 
 		res, err := p.sess.addTask(taskf(
@@ -521,9 +521,9 @@ func Test_Delete_Precreate(t *testing.T) {
 		p.assert.True(p.fs.file(testFile1).exists())
 	}))
 
-	t.Run("precreated directory", run(func(p *testpack) {
+	t.Run("speculative directory", run(func(p *testpack) {
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
 
 		res, err := p.sess.addTask(taskf(
@@ -589,10 +589,10 @@ func Test_DeleteRecursive(t *testing.T) {
 	}))
 }
 
-func Test_DeleteRecursive_Precreate(t *testing.T) {
+func Test_DeleteRecursive_Speculate(t *testing.T) {
 	t.Run("typical", run(func(p *testpack) {
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
 
 		res, err := p.sess.addTask(taskf(
@@ -606,9 +606,9 @@ func Test_DeleteRecursive_Precreate(t *testing.T) {
 		p.assert.True(p.fs.file(testDir1File1).exists())
 	}))
 
-	t.Run("precreated file", run(func(p *testpack) {
+	t.Run("speculative file", run(func(p *testpack) {
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
 
 		res, err := p.sess.addTask(taskf(
@@ -622,11 +622,11 @@ func Test_DeleteRecursive_Precreate(t *testing.T) {
 		p.assert.True(p.fs.file(testDir1File1).exists())
 	}))
 
-	t.Run("precreated file included", run(func(p *testpack) {
+	t.Run("speculative file included", run(func(p *testpack) {
 		p.fs.dir(testDir1).create()
 
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
 
 		{
@@ -684,10 +684,10 @@ func Test_Existence(t *testing.T) {
 	}))
 }
 
-func Test_Existence_Precreate(t *testing.T) {
-	t.Run("precreated new file treated as inexistent", run(func(p *testpack) {
+func Test_Existence_Speculate(t *testing.T) {
+	t.Run("speculative new file treated as inexistent", run(func(p *testpack) {
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreated": true}`,
+			`{"dest": "%s", "speculative": true}`,
 			p.fs.path(testFile1)))
 
 		res, err := p.sess.addTask(taskf(
@@ -698,11 +698,11 @@ func Test_Existence_Precreate(t *testing.T) {
 		p.assert.Equal(testResFalse, res)
 	}))
 
-	t.Run("precreated existing file treated as existent", run(func(p *testpack) {
+	t.Run("speculative existing file treated as existent", run(func(p *testpack) {
 		p.fs.file(testFile1).write(testContent1)
 
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreated": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testFile1)))
 
 		res, err := p.sess.addTask(taskf(
@@ -713,9 +713,9 @@ func Test_Existence_Precreate(t *testing.T) {
 		p.assert.Equal(testResTrue, res)
 	}))
 
-	t.Run("precreated directory treated as inexistent", run(func(p *testpack) {
+	t.Run("speculative directory treated as inexistent", run(func(p *testpack) {
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreated": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
 
 		res, err := p.sess.addTask(taskf(
@@ -749,12 +749,12 @@ func Test_ListDir(t *testing.T) {
 	}))
 }
 
-func Test_ListDir_Precreate(t *testing.T) {
-	t.Run("precreated new file is omitted", run(func(p *testpack) {
+func Test_ListDir_Speculate(t *testing.T) {
+	t.Run("speculative new file is omitted", run(func(p *testpack) {
 		p.fs.file(testFile1).write(testContent1)
 
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testFile2)))
 
 		res, err := p.sess.addTask(taskf(
@@ -765,12 +765,12 @@ func Test_ListDir_Precreate(t *testing.T) {
 		p.assert.Equal([]string{testFile1}, jsonSortedSlice(res))
 	}))
 
-	t.Run("precreated existing file isn't omitted", run(func(p *testpack) {
+	t.Run("speculative existing file isn't omitted", run(func(p *testpack) {
 		p.fs.file(testFile1).write(testContent1)
 		p.fs.file(testFile2).write(testContent1)
 
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testFile1)))
 
 		res, err := p.sess.addTask(taskf(
@@ -781,11 +781,11 @@ func Test_ListDir_Precreate(t *testing.T) {
 		p.assert.Equal([]string{testFile1, testFile2}, jsonSortedSlice(res))
 	}))
 
-	t.Run("precreated directory is omitted", run(func(p *testpack) {
+	t.Run("speculative directory is omitted", run(func(p *testpack) {
 		p.fs.file(testFile1).write(testContent1)
 
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
 
 		res, err := p.sess.addTask(taskf(
@@ -822,10 +822,10 @@ func Test_Mkdir(t *testing.T) {
 	}))
 }
 
-func Test_Mkdir_Precreate(t *testing.T) {
-	t.Run("mkdir already precreated directory", run(func(p *testpack) {
+func Test_Mkdir_Speculate(t *testing.T) {
+	t.Run("mkdir already speculative directory", run(func(p *testpack) {
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
 
 		res, err := p.sess.addTask(taskf(
@@ -839,9 +839,9 @@ func Test_Mkdir_Precreate(t *testing.T) {
 		p.assert.True(p.fs.dir(testDir1).exists())
 	}))
 
-	t.Run("mkdir already precreated directory twice fails", run(func(p *testpack) {
+	t.Run("mkdir already speculative directory twice fails", run(func(p *testpack) {
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
 
 		p.sess.addTask(taskf(
@@ -859,9 +859,9 @@ func Test_Mkdir_Precreate(t *testing.T) {
 		p.assert.True(p.fs.dir(testDir1).exists())
 	}))
 
-	t.Run("already precreated directory persists after mkdir", run(func(p *testpack) {
+	t.Run("already speculative directory persists after mkdir", run(func(p *testpack) {
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
 
 		p.sess.addTask(taskf(
@@ -873,9 +873,9 @@ func Test_Mkdir_Precreate(t *testing.T) {
 		p.assert.True(p.fs.dir(testDir1).exists())
 	}))
 
-	t.Run("same name as precreated file", run(func(p *testpack) {
+	t.Run("same name as speculative file", run(func(p *testpack) {
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testFile1)))
 
 		res, err := p.sess.addTask(taskf(
@@ -890,9 +890,9 @@ func Test_Mkdir_Precreate(t *testing.T) {
 		p.assert.True(p.fs.dir(testFile1).exists())
 	}))
 
-	t.Run("directory of the same name as precreated file persists", run(func(p *testpack) {
+	t.Run("directory of the same name as speculative file persists", run(func(p *testpack) {
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testFile1)))
 
 		p.sess.addTask(taskf(
@@ -906,10 +906,10 @@ func Test_Mkdir_Precreate(t *testing.T) {
 	}))
 }
 
-func Test_Precreate(t *testing.T) {
+func Test_Speculate(t *testing.T) {
 	t.Run("typical", run(func(p *testpack) {
 		res, err := p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testFile1)))
 
 		p.assert.NoError(err)
@@ -921,7 +921,7 @@ func Test_Precreate(t *testing.T) {
 
 	t.Run("deep file", run(func(p *testpack) {
 		res, err := p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
 
 		p.assert.NoError(err)
@@ -934,7 +934,7 @@ func Test_Precreate(t *testing.T) {
 
 	t.Run("discarded new file", run(func(p *testpack) {
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testFile1)))
 
 		p.sess.finalize()
@@ -946,7 +946,7 @@ func Test_Precreate(t *testing.T) {
 		p.fs.file(testFile1).write(testContent1)
 
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testFile1)))
 
 		p.sess.finalize()
@@ -957,10 +957,10 @@ func Test_Precreate(t *testing.T) {
 
 	t.Run("two deep files with different levels, both discarded", run(func(p *testpack) {
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File2)))
 		p.sess.addTask(taskf(
-			`{"dest": "%s", "precreate": true}`,
+			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1Dir1File1)))
 
 		p.sess.finalize()

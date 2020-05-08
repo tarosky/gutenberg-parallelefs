@@ -484,7 +484,7 @@ func (s *session) deleteSingle(path string) (bool, error) {
 
 func (s *session) delete(path string, recursive bool) (bool, error) {
 	if f := s.findPrecreatedFile(path); f != nil {
-		return !f.getFutureFile().isNew, nil
+		return !f.isNew, nil
 	}
 
 	if t := s.findPrecreatedDir(path); t != nil {
@@ -567,7 +567,7 @@ func (s *session) delete(path string, recursive bool) (bool, error) {
 	unmanagedFileExists := false
 	for _, n := range names {
 		if f := s.findPrecreatedFile(path + "/" + n); f != nil {
-			if f.getFutureFile().isNew {
+			if f.isNew {
 				precreatedFileExists = true
 			}
 		} else {
@@ -660,7 +660,7 @@ func (s *session) listDir(dirPath string) ([]string, error) {
 		}
 
 		if f := s.findPrecreatedFile(path); f != nil {
-			if f.getFutureFile().isNew {
+			if f.isNew {
 				continue
 			}
 			resNames = append(resNames, n)
@@ -690,7 +690,7 @@ func (s *session) existence(destPath string) bool {
 	}()
 
 	if f := s.findPrecreatedFile(destPath); f != nil {
-		return !f.getFutureFile().isNew
+		return !f.isNew
 	}
 
 	if t := s.findPrecreatedDir(destPath); t != nil {
@@ -721,17 +721,14 @@ func (s *session) copyFile(srcPath, destPath string) (string, error) {
 			log.Debugf("createDest took %s", time.Since(start))
 		}()
 
-		if pf := s.findPrecreatedFile(destPath); pf != nil {
+		if f := s.usePrecreatedFile(destPath); f != nil {
 			log.Debugf("precreated file found at: %s", destPath)
 
-			delete(pf.parent.childFiles, pf.name)
-
-			fut := pf.getFutureFile()
-			if fut.err != nil {
-				return nil, fut.err
+			if f.err != nil {
+				return nil, f.err
 			}
 
-			return fut.file, nil
+			return f.file, nil
 		}
 
 		log.Debug("precreated file not found")
@@ -926,7 +923,7 @@ func (s *session) addPrecreatedFile(absPath string) (*precreatedFile, error) {
 	return s.precreatedDirTree.addFileInternal(strings.Split(absPath[1:], "/"))
 }
 
-func (s *session) findPrecreatedFile(absPath string) *precreatedFile {
+func (s *session) findPrecreatedFile(absPath string) *futureFile {
 	name := filepath.Base(absPath)
 	if name == "/" {
 		return nil
@@ -942,7 +939,7 @@ func (s *session) findPrecreatedFile(absPath string) *precreatedFile {
 		return nil
 	}
 
-	return file
+	return file.getFutureFile()
 }
 
 func (s *session) usePrecreatedFile(absPath string) *futureFile {

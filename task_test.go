@@ -31,6 +31,7 @@ const (
 	testDir1Dir2File2 = "subdir/anotherdir/test2.txt"
 
 	testContent1 = "test-string"
+	testContent2 = "another-text"
 
 	testResTrue  = "true"
 	testResFalse = "false"
@@ -60,7 +61,7 @@ func (f *testFS) dir(path string) *testDirectory {
 }
 
 func b64String(content string) string {
-	return base64.StdEncoding.EncodeToString([]byte(testContent1))
+	return base64.StdEncoding.EncodeToString([]byte(content))
 }
 
 func jsonSortedSlice(content string) []string {
@@ -460,6 +461,32 @@ func Test_CreateFile_Speculate(t *testing.T) {
 	}))
 }
 
+func Test_CreateFile_Delete_Speculate(t *testing.T) {
+	t.Run("typical", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true}`,
+			p.fs.path(testFile1)))
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "delete": true}`,
+			p.fs.path(testFile1)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "content_b64": "%s"}`,
+			p.fs.path(testFile1),
+			b64String(testContent2)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.sess.finalize()
+		p.assert.True(p.fs.file(testFile1).exists())
+		p.assert.Equal(testContent2, p.fs.file(testFile1).read())
+	}))
+}
+
 func Test_Delete(t *testing.T) {
 	t.Run("typical", run(func(p *testpack) {
 		p.fs.file(testFile1).write(testContent1)
@@ -520,6 +547,27 @@ func Test_Delete_Speculate(t *testing.T) {
 
 		p.sess.done()
 		p.assert.True(p.fs.file(testFile1).exists())
+	}))
+
+	t.Run("existing", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true}`,
+			p.fs.path(testFile1)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "delete": true}`,
+			p.fs.path(testFile1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.sess.done()
+		p.assert.True(p.fs.file(testFile1).exists())
+
+		p.sess.finalize()
+		p.assert.False(p.fs.file(testFile1).exists())
 	}))
 
 	t.Run("speculative directory", run(func(p *testpack) {
@@ -689,11 +737,12 @@ func Test_DeleteRecursive_Speculate(t *testing.T) {
 
 	t.Run("deep mixed", run(func(p *testpack) {
 		p.fs.dir(testDir1).create()
-		p.fs.file(testDir1File1).write(testContent1)
+		p.fs.dir(testDir1Dir2).create()
+		p.fs.file(testDir1Dir2File1).write(testContent1)
 
 		p.sess.addTask(taskf(
 			`{"dest": "%s", "speculate": true}`,
-			p.fs.path(testDir1Dir2File1)))
+			p.fs.path(testDir1Dir2File2)))
 
 		res, err := p.sess.addTask(taskf(
 			`{"dest": "%s", "delete_recursive": true}`,
@@ -703,8 +752,8 @@ func Test_DeleteRecursive_Speculate(t *testing.T) {
 		p.assert.Equal(testResTrue, res)
 
 		p.sess.done()
-		p.assert.False(p.fs.file(testDir1File1).exists())
-		p.assert.True(p.fs.file(testDir1Dir2File1).exists())
+		p.assert.False(p.fs.file(testDir1Dir2File1).exists())
+		p.assert.True(p.fs.file(testDir1Dir2File2).exists())
 	}))
 }
 

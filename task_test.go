@@ -459,6 +459,51 @@ func Test_CreateFile_Precreate(t *testing.T) {
 	// }))
 }
 
+func Test_Delete(t *testing.T) {
+	t.Run("typical", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "delete": true}`,
+			p.fs.path(testFile1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.sess.done()
+		p.assert.False(p.fs.file(testFile1).exists())
+	}))
+
+	t.Run("empty directory", run(func(p *testpack) {
+		p.fs.dir(testDir1).create()
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "delete": true}`,
+			p.fs.path(testDir1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.sess.done()
+		p.assert.False(p.fs.file(testDir1).exists())
+	}))
+
+	t.Run("non-empty directory", run(func(p *testpack) {
+		p.fs.dir(testDir1).create()
+		p.fs.file(testDir1File1).write(testContent1)
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "delete": true}`,
+			p.fs.path(testDir1)))
+
+		p.assert.Error(err)
+		p.assert.Equal(testResFalse, res)
+
+		p.sess.done()
+		p.assert.True(p.fs.file(testDir1).exists())
+	}))
+}
+
 func Test_Delete_Precreate(t *testing.T) {
 	t.Run("typical", run(func(p *testpack) {
 		p.sess.addTask(taskf(

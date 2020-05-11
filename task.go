@@ -22,6 +22,7 @@ type task struct {
 	Destination     string  `json:"dest"`
 	SourcePath      *string `json:"src"`
 	Content         content `json:"content_b64"` // Never use Content for a large file.
+	Permission      *uint32 `json:"perm"`
 	Speculate       bool    `json:"speculate"`
 	Existence       bool    `json:"existence"`
 	Mkdir           bool    `json:"mkdir"`

@@ -30,8 +30,9 @@ const (
 	testDir1Dir2File1 = "subdir/anotherdir/test.txt"
 	testDir1Dir2File2 = "subdir/anotherdir/test2.txt"
 
-	testContent1 = "test-string"
-	testContent2 = "another-text"
+	testContent1     = "test-string"
+	testContent2     = "another-text"
+	testLongContent1 = "long-long-test-string"
 
 	testResTrue  = "true"
 	testResFalse = "false"
@@ -207,7 +208,7 @@ func Test_CopyFile(t *testing.T) {
 }
 
 func Test_CopyFile_Speculate(t *testing.T) {
-	t.Run("typical, fulfilled by copy", run(func(p *testpack) {
+	t.Run("typical", run(func(p *testpack) {
 		p.fs.file(testFile1).write(testContent1)
 
 		p.sess.addTask(taskf(
@@ -222,10 +223,32 @@ func Test_CopyFile_Speculate(t *testing.T) {
 		p.assert.NoError(err)
 		p.assert.Equal(testResTrue, res)
 
+		p.sess.finalize()
 		p.assert.Equal(testContent1, p.fs.file(testFile2).read())
 	}))
 
-	t.Run("deep file, fulfilled by copy", run(func(p *testpack) {
+	t.Run("overwrite", run(func(p *testpack) {
+		// Check if truncate works.
+		p.fs.file(testFile1).write(testLongContent1)
+		p.fs.file(testFile2).write(testContent2)
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true}`,
+			p.fs.path(testFile2)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "src": "%s"}`,
+			p.fs.path(testFile1),
+			p.fs.path(testFile2)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.sess.finalize()
+		p.assert.Equal(testContent2, p.fs.file(testFile1).read())
+	}))
+
+	t.Run("deep file", run(func(p *testpack) {
 		p.fs.file(testFile1).write(testContent1)
 
 		p.sess.addTask(taskf(
@@ -243,7 +266,7 @@ func Test_CopyFile_Speculate(t *testing.T) {
 		p.assert.Equal(testContent1, p.fs.file(testDir1File1).read())
 	}))
 
-	t.Run("two deep files, first one discarded, fulfilled by copy", run(func(p *testpack) {
+	t.Run("two deep files, first one discarded", run(func(p *testpack) {
 		p.fs.file(testFile1).write(testContent1)
 		p.fs.file(testFile2).write(testContent1)
 
@@ -264,7 +287,7 @@ func Test_CopyFile_Speculate(t *testing.T) {
 		p.assert.Equal([]string{testFile2}, p.fs.dir(testDir1).ls())
 	}))
 
-	t.Run("two deep files, second one discarded, fulfilled by copy", run(func(p *testpack) {
+	t.Run("two deep files, second one discarded", run(func(p *testpack) {
 		p.fs.file(testFile1).write(testContent1)
 		p.fs.file(testFile2).write(testContent1)
 
@@ -285,7 +308,7 @@ func Test_CopyFile_Speculate(t *testing.T) {
 		p.assert.Equal([]string{testFile1}, p.fs.dir(testDir1).ls())
 	}))
 
-	t.Run("two deep files with different levels, shallower one discarded, fulfilled by content", run(func(p *testpack) {
+	t.Run("two deep files with different levels, shallower one discarded", run(func(p *testpack) {
 		p.fs.file(testFile1).write(testContent1)
 		p.fs.file(testFile2).write(testContent1)
 
@@ -307,7 +330,7 @@ func Test_CopyFile_Speculate(t *testing.T) {
 		p.assert.Equal([]string{testDir2}, p.fs.dir(testDir1).ls())
 	}))
 
-	t.Run("two deep files with different levels, deeper one discarded, fulfilled by content", run(func(p *testpack) {
+	t.Run("two deep files with different levels, deeper one discarded", run(func(p *testpack) {
 		p.fs.file(testFile1).write(testContent1)
 		p.fs.file(testFile2).write(testContent1)
 
@@ -355,7 +378,7 @@ func Test_CreateFile(t *testing.T) {
 }
 
 func Test_CreateFile_Speculate(t *testing.T) {
-	t.Run("typical, fulfilled by content", run(func(p *testpack) {
+	t.Run("typical", run(func(p *testpack) {
 		p.sess.addTask(taskf(
 			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testFile1)))
@@ -369,9 +392,32 @@ func Test_CreateFile_Speculate(t *testing.T) {
 		p.assert.Equal(testResTrue, res)
 
 		p.assert.Equal(testContent1, p.fs.file(testFile1).read())
+
+		p.sess.finalize()
+		p.assert.Equal(testContent1, p.fs.file(testFile1).read())
 	}))
 
-	t.Run("deep file, fulfilled by content", run(func(p *testpack) {
+	t.Run("overwrite", run(func(p *testpack) {
+		// Check if truncate works.
+		p.fs.file(testFile1).write(testLongContent1)
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true}`,
+			p.fs.path(testFile1)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "content_b64": "%s"}`,
+			p.fs.path(testFile1),
+			b64String(testContent2)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.sess.finalize()
+		p.assert.Equal(testContent2, p.fs.file(testFile1).read())
+	}))
+
+	t.Run("deep file", run(func(p *testpack) {
 		p.sess.addTask(taskf(
 			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
@@ -387,7 +433,7 @@ func Test_CreateFile_Speculate(t *testing.T) {
 		p.assert.Equal(testContent1, p.fs.file(testDir1File1).read())
 	}))
 
-	t.Run("two deep files, first one discarded, fulfilled by content", run(func(p *testpack) {
+	t.Run("two deep files, first one discarded", run(func(p *testpack) {
 		p.sess.addTask(taskf(
 			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
@@ -405,7 +451,7 @@ func Test_CreateFile_Speculate(t *testing.T) {
 		p.assert.Equal([]string{testFile2}, p.fs.dir(testDir1).ls())
 	}))
 
-	t.Run("two deep files, second one discarded, fulfilled by content", run(func(p *testpack) {
+	t.Run("two deep files, second one discarded", run(func(p *testpack) {
 		p.sess.addTask(taskf(
 			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File1)))
@@ -423,7 +469,7 @@ func Test_CreateFile_Speculate(t *testing.T) {
 		p.assert.Equal([]string{testFile1}, p.fs.dir(testDir1).ls())
 	}))
 
-	t.Run("two deep files with different levels, shallower one discarded, fulfilled by content", run(func(p *testpack) {
+	t.Run("two deep files with different levels, shallower one discarded", run(func(p *testpack) {
 		p.sess.addTask(taskf(
 			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File2)))
@@ -442,7 +488,7 @@ func Test_CreateFile_Speculate(t *testing.T) {
 		p.assert.Equal([]string{testDir2}, p.fs.dir(testDir1).ls())
 	}))
 
-	t.Run("two deep files with different levels, deeper one discarded, fulfilled by content", run(func(p *testpack) {
+	t.Run("two deep files with different levels, deeper one discarded", run(func(p *testpack) {
 		p.sess.addTask(taskf(
 			`{"dest": "%s", "speculate": true}`,
 			p.fs.path(testDir1File2)))
@@ -580,6 +626,25 @@ func Test_Delete_Speculate(t *testing.T) {
 			p.fs.path(testDir1)))
 
 		p.assert.NoError(err)
+		p.assert.Equal(testResFalse, res)
+
+		p.sess.done()
+		p.assert.True(p.fs.file(testDir1).exists())
+	}))
+
+	t.Run("non-empty directory", run(func(p *testpack) {
+		p.fs.dir(testDir1).create()
+		p.fs.file(testDir1File1).write(testContent1)
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true}`,
+			p.fs.path(testDir1File2)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "delete": true}`,
+			p.fs.path(testDir1)))
+
+		p.assert.Error(err)
 		p.assert.Equal(testResFalse, res)
 
 		p.sess.done()
@@ -754,6 +819,28 @@ func Test_DeleteRecursive_Speculate(t *testing.T) {
 		p.sess.done()
 		p.assert.False(p.fs.file(testDir1Dir2File1).exists())
 		p.assert.True(p.fs.file(testDir1Dir2File2).exists())
+	}))
+
+	t.Run("existing file", run(func(p *testpack) {
+		p.fs.dir(testDir1).create()
+		p.fs.file(testDir1File1).write(testContent1)
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true}`,
+			p.fs.path(testDir1File1)))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "delete_recursive": true}`,
+			p.fs.path(testDir1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.sess.done()
+		p.assert.True(p.fs.file(testDir1File1).exists())
+
+		p.sess.finalize()
+		p.assert.False(p.fs.dir(testDir1).exists())
 	}))
 }
 

@@ -34,6 +34,11 @@ const (
 	testContent2     = "another-text"
 	testLongContent1 = "long-long-test-string"
 
+	testDirPerm1  = os.FileMode(0707)
+	testDirPerm2  = os.FileMode(0770)
+	testFilePerm1 = os.FileMode(0606)
+	testFilePerm2 = os.FileMode(0660)
+
 	testResTrue  = "true"
 	testResFalse = "false"
 )
@@ -99,15 +104,40 @@ func (f *testFile) read() string {
 	return string(bs)
 }
 
-func (f *testFile) write(content string) {
+func (f *testFile) write(content string) *testFile {
 	if err := ioutil.WriteFile(f.path, []byte(content), 0644); err != nil {
 		log.Fatal(err)
 	}
+	return f
+}
+
+func (f *testFile) chmod(mode os.FileMode) *testFile {
+	if err := os.Chmod(f.path, mode); err != nil {
+		log.Fatal(err)
+	}
+	return f
+}
+
+func (f *testFile) mode() os.FileMode {
+	s, err := os.Stat(f.path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return s.Mode().Perm()
 }
 
 func (f *testFile) exists() bool {
-	_, err := os.Stat(f.path)
-	return !os.IsNotExist(err)
+	st, err := os.Stat(f.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false
+		}
+		log.Fatal(err)
+	}
+	if st.IsDir() {
+		log.Fatalf("the path is not file: %s", f.path)
+	}
+	return true
 }
 
 type testDirectory struct {
@@ -135,15 +165,40 @@ func (d *testDirectory) ls() []string {
 	return names
 }
 
-func (d *testDirectory) create() {
+func (d *testDirectory) create() *testDirectory {
 	if err := os.Mkdir(d.path, 0755); err != nil {
 		log.Fatal(err)
 	}
+	return d
+}
+
+func (d *testDirectory) chmod(mode os.FileMode) *testDirectory {
+	if err := os.Chmod(d.path, mode); err != nil {
+		log.Fatal(err)
+	}
+	return d
 }
 
 func (d *testDirectory) exists() bool {
-	_, err := os.Stat(d.path)
-	return !os.IsNotExist(err)
+	st, err := os.Stat(d.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false
+		}
+		log.Fatal(err)
+	}
+	if !st.IsDir() {
+		log.Fatalf("the path is not directory: %s", d.path)
+	}
+	return true
+}
+
+func (d *testDirectory) mode() os.FileMode {
+	s, err := os.Stat(d.path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return s.Mode().Perm()
 }
 
 type testpack struct {
@@ -194,6 +249,21 @@ func Test_CopyFile(t *testing.T) {
 		p.assert.Equal(testContent1, p.fs.file(testFile1).read())
 	}))
 
+	t.Run("overwrite", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+		p.fs.file(testFile2).write(testContent2)
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "src": "%s"}`,
+			p.fs.path(testFile1),
+			p.fs.path(testFile2)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.assert.Equal(testContent2, p.fs.file(testFile1).read())
+	}))
+
 	t.Run("parent dir doesn't exist", run(func(p *testpack) {
 		p.fs.file(testFile2).write(testContent1)
 
@@ -204,6 +274,37 @@ func Test_CopyFile(t *testing.T) {
 
 		p.assert.Error(err)
 		p.assert.Equal(testResFalse, res)
+	}))
+
+	t.Run("chmod", run(func(p *testpack) {
+		p.fs.file(testFile2).write(testContent1)
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "src": "%s", "perm": %d}`,
+			p.fs.path(testFile1),
+			p.fs.path(testFile2),
+			testFilePerm1))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.assert.Equal(testFilePerm1, p.fs.file(testFile1).mode())
+	}))
+
+	t.Run("overwrite chmod", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+		p.fs.file(testFile2).write(testContent2)
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "src": "%s", "perm": %d}`,
+			p.fs.path(testFile1),
+			p.fs.path(testFile2),
+			testFilePerm1))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.assert.Equal(testFilePerm1, p.fs.file(testFile1).mode())
 	}))
 }
 
@@ -366,6 +467,21 @@ func Test_CreateFile(t *testing.T) {
 		p.assert.Equal(testContent1, p.fs.file(testFile1).read())
 	}))
 
+	t.Run("overwrite", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "content_b64": "%s"}`,
+			p.fs.path(testFile1),
+			b64String(testContent2)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.sess.done()
+		p.assert.Equal(testContent2, p.fs.file(testFile1).read())
+	}))
+
 	t.Run("parent dir doesn't exist", run(func(p *testpack) {
 		res, err := p.sess.addTask(taskf(
 			`{"dest": "%s", "content_b64": "%s"}`,
@@ -374,6 +490,36 @@ func Test_CreateFile(t *testing.T) {
 
 		p.assert.Equal(testResFalse, res)
 		p.assert.Error(err)
+	}))
+
+	t.Run("chmod", run(func(p *testpack) {
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "content_b64": "%s", "perm": %d}`,
+			p.fs.path(testFile1),
+			b64String(testContent1),
+			testFilePerm1))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.sess.done()
+		p.assert.Equal(testFilePerm1, p.fs.file(testFile1).mode())
+	}))
+
+	t.Run("overwrite chmod", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1)
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "content_b64": "%s", "perm": %d}`,
+			p.fs.path(testFile1),
+			b64String(testContent2),
+			testFilePerm1))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.sess.done()
+		p.assert.Equal(testFilePerm1, p.fs.file(testFile1).mode())
 	}))
 }
 
@@ -415,6 +561,73 @@ func Test_CreateFile_Speculate(t *testing.T) {
 
 		p.sess.finalize()
 		p.assert.Equal(testContent2, p.fs.file(testFile1).read())
+	}))
+
+	t.Run("chmod", run(func(p *testpack) {
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true, "perm": %d}`,
+			p.fs.path(testFile1),
+			testFilePerm1))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "content_b64": "%s", "perm": %d}`,
+			p.fs.path(testFile1),
+			b64String(testContent1),
+			testFilePerm2))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.assert.Equal(testFilePerm2, p.fs.file(testFile1).mode())
+
+		p.sess.finalize()
+		p.assert.Equal(testFilePerm2, p.fs.file(testFile1).mode())
+	}))
+
+	t.Run("chmod overwrite", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1).chmod(testFilePerm1)
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true, "perm": %d}`,
+			p.fs.path(testFile1),
+			testFilePerm2))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "content_b64": "%s", "perm": %d}`,
+			p.fs.path(testFile1),
+			b64String(testContent1),
+			testFilePerm2))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.assert.Equal(testFilePerm2, p.fs.file(testFile1).mode())
+
+		p.sess.finalize()
+		p.assert.Equal(testFilePerm2, p.fs.file(testFile1).mode())
+	}))
+
+	t.Run("chmod overwrite, mode changed again", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1).chmod(testFilePerm1)
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true, "perm": %d}`,
+			p.fs.path(testFile1),
+			testFilePerm2))
+
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "content_b64": "%s", "perm": %d}`,
+			p.fs.path(testFile1),
+			b64String(testContent1),
+			testFilePerm1))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.assert.Equal(testFilePerm1, p.fs.file(testFile1).mode())
+
+		p.sess.finalize()
+		p.assert.Equal(testFilePerm1, p.fs.file(testFile1).mode())
 	}))
 
 	t.Run("deep file", run(func(p *testpack) {
@@ -559,7 +772,7 @@ func Test_Delete(t *testing.T) {
 		p.assert.Equal(testResTrue, res)
 
 		p.sess.done()
-		p.assert.False(p.fs.file(testDir1).exists())
+		p.assert.False(p.fs.dir(testDir1).exists())
 	}))
 
 	t.Run("non-empty directory", run(func(p *testpack) {
@@ -574,7 +787,7 @@ func Test_Delete(t *testing.T) {
 		p.assert.Equal(testResFalse, res)
 
 		p.sess.done()
-		p.assert.True(p.fs.file(testDir1).exists())
+		p.assert.True(p.fs.dir(testDir1).exists())
 	}))
 }
 
@@ -629,7 +842,7 @@ func Test_Delete_Speculate(t *testing.T) {
 		p.assert.Equal(testResFalse, res)
 
 		p.sess.done()
-		p.assert.True(p.fs.file(testDir1).exists())
+		p.assert.True(p.fs.dir(testDir1).exists())
 	}))
 
 	t.Run("non-empty directory", run(func(p *testpack) {
@@ -648,7 +861,7 @@ func Test_Delete_Speculate(t *testing.T) {
 		p.assert.Equal(testResFalse, res)
 
 		p.sess.done()
-		p.assert.True(p.fs.file(testDir1).exists())
+		p.assert.True(p.fs.dir(testDir1).exists())
 	}))
 }
 
@@ -1003,6 +1216,19 @@ func Test_Mkdir(t *testing.T) {
 		p.assert.True(p.fs.dir(testDir1).exists())
 	}))
 
+	t.Run("chmod", run(func(p *testpack) {
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "mkdir": true, "perm": %d}`,
+			p.fs.path(testDir1),
+			testDirPerm1))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.sess.done()
+		p.assert.Equal(testDirPerm1, p.fs.dir(testDir1).mode())
+	}))
+
 	t.Run("already exists", run(func(p *testpack) {
 		p.fs.dir(testDir1).create()
 
@@ -1112,6 +1338,19 @@ func Test_Speculate(t *testing.T) {
 		p.assert.True(p.fs.file(testFile1).exists())
 	}))
 
+	t.Run("chmod", run(func(p *testpack) {
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true, "perm": %d}`,
+			p.fs.path(testFile1),
+			testFilePerm1))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.sess.done()
+		p.assert.Equal(testFilePerm1, p.fs.file(testFile1).mode())
+	}))
+
 	t.Run("deep file", run(func(p *testpack) {
 		res, err := p.sess.addTask(taskf(
 			`{"dest": "%s", "speculate": true}`,
@@ -1146,6 +1385,22 @@ func Test_Speculate(t *testing.T) {
 
 		p.assert.Equal([]string{testFile1}, p.fs.dir(testRootDir).ls())
 		p.assert.Equal(testContent1, p.fs.file(testFile1).read())
+	}))
+
+	t.Run("never change perm when file exists", run(func(p *testpack) {
+		p.fs.file(testFile1).write(testContent1).chmod(testFilePerm1)
+
+		p.sess.addTask(taskf(
+			`{"dest": "%s", "speculate": true, "perm": %d}`,
+			p.fs.path(testFile1),
+			testFilePerm2))
+
+		p.sess.done()
+		p.assert.Equal(testFilePerm1, p.fs.file(testFile1).mode())
+
+		p.sess.finalize()
+
+		p.assert.Equal(testFilePerm1, p.fs.file(testFile1).mode())
 	}))
 
 	t.Run("two deep files with different levels, both discarded", run(func(p *testpack) {

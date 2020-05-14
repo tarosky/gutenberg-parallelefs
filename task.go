@@ -22,6 +22,7 @@ type task struct {
 	Destination     string  `json:"dest"`
 	SourcePath      *string `json:"src"`
 	Content         content `json:"content_b64"` // Never use Content for a large file.
+	Permission      *uint32 `json:"perm"`        // "src", "content_b64", or "mkdir" is required.
 	Speculate       bool    `json:"speculate"`
 	Existence       bool    `json:"existence"`
 	Mkdir           bool    `json:"mkdir"`
@@ -39,6 +40,7 @@ type speculativeFile struct {
 
 type futureFile struct {
 	file  *os.File
+	perm  os.FileMode
 	isNew bool
 	err   error
 }
@@ -110,7 +112,7 @@ func createDirTree(parent *dirTree, name string, speculate bool) (*dirTree, erro
 		"cannot create directory: file already exists: %s", path)
 }
 
-func (t *dirTree) speculateFile(name string) *speculativeFile {
+func (t *dirTree) speculateFile(name string, perm *os.FileMode) *speculativeFile {
 	path := t.getPath() + "/" + name
 	done := make(chan *futureFile)
 
@@ -122,25 +124,64 @@ func (t *dirTree) speculateFile(name string) *speculativeFile {
 	go func() {
 		defer close(done)
 
+		permission := func(file *os.File) (os.FileMode, error) {
+			st, err := file.Stat()
+			if err != nil {
+				return 00, err
+			}
+
+			return st.Mode().Perm(), nil
+		}
+
 		if file, err := os.OpenFile(path, os.O_WRONLY, 0666); err == nil {
+			curPerm, err := permission(file)
+			if err != nil {
+				done <- &futureFile{err: err}
+				return
+			}
+
+			// Never change permission in advance since it reflects immediately.
+
 			done <- &futureFile{
 				file:  file,
 				isNew: false,
+				perm:  curPerm,
 			}
 			return
 		}
 
-		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0666)
+		var newPerm os.FileMode
+		if perm != nil {
+			newPerm = *perm
+		} else {
+			newPerm = 0666
+		}
+
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, newPerm)
 		if err != nil {
-			done <- &futureFile{
-				err: err,
-			}
+			done <- &futureFile{err: err}
 			return
+		}
+
+		createdPerm, err := permission(file)
+		if err != nil {
+			done <- &futureFile{err: err}
+			return
+		}
+
+		if perm != nil && createdPerm != *perm {
+			if err := file.Chmod(*perm); err != nil {
+				done <- &futureFile{err: err}
+				return
+			}
+
+			createdPerm = *perm
 		}
 
 		done <- &futureFile{
 			file:  file,
 			isNew: true,
+			perm:  createdPerm,
 		}
 	}()
 
@@ -163,7 +204,7 @@ func (t *dirTree) getPath() string {
 	return *t.pathCache
 }
 
-func (t *dirTree) addFileInternal(pathParts []string) (*speculativeFile, error) {
+func (t *dirTree) addFileInternal(pathParts []string, perm *os.FileMode) (*speculativeFile, error) {
 	if len(pathParts) < 1 {
 		log.Fatalf("pathParts must contain at least one element")
 	}
@@ -171,7 +212,7 @@ func (t *dirTree) addFileInternal(pathParts []string) (*speculativeFile, error) 
 	if len(pathParts) == 1 {
 		file, ok := t.childFiles[pathParts[0]]
 		if !ok {
-			return t.speculateFile(pathParts[0]), nil
+			return t.speculateFile(pathParts[0], perm), nil
 		}
 		return file, nil
 	}
@@ -187,10 +228,10 @@ func (t *dirTree) addFileInternal(pathParts []string) (*speculativeFile, error) 
 		t.childDirs[pathParts[0]] = dir
 	}
 
-	return dir.addFileInternal(pathParts[1:])
+	return dir.addFileInternal(pathParts[1:], perm)
 }
 
-func (t *dirTree) mkDirInternal(dirParts []string) error {
+func (t *dirTree) mkDirInternal(dirParts []string, perm *os.FileMode) error {
 	if len(dirParts) == 0 {
 		log.Fatalf("dirParts must contain at least one element")
 	}
@@ -202,7 +243,32 @@ func (t *dirTree) mkDirInternal(dirParts []string) error {
 	dir, ok := t.childDirs[dirParts[0]]
 	if !ok {
 		path := t.getPath() + "/" + filepath.Join(strings.Join(dirParts, "/"))
-		return os.Mkdir(path, 0755)
+
+		var newPerm os.FileMode
+		if perm == nil {
+			newPerm = 0755
+		} else {
+			newPerm = *perm
+		}
+
+		if err := os.Mkdir(path, newPerm); err != nil {
+			return err
+		}
+
+		if perm == nil {
+			return nil
+		}
+
+		st, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+
+		if *perm == st.Mode().Perm() {
+			return nil
+		}
+
+		return os.Chmod(path, *perm)
 	}
 
 	if len(dirParts) == 1 {
@@ -213,7 +279,7 @@ func (t *dirTree) mkDirInternal(dirParts []string) error {
 		return fmt.Errorf("directory already exists")
 	}
 
-	return dir.mkDirInternal(dirParts[1:])
+	return dir.mkDirInternal(dirParts[1:], perm)
 }
 
 func (t *dirTree) clean() error {
@@ -462,16 +528,22 @@ func (s *session) addTask(input []byte) (string, error) {
 		return valInvalid, err
 	}
 
+	var perm *os.FileMode
+	if task.Permission != nil {
+		p := os.FileMode(*task.Permission).Perm()
+		perm = &p
+	}
+
 	if task.SourcePath != nil {
-		return s.copyFile(*task.SourcePath, destPath)
+		return s.copyFile(*task.SourcePath, destPath, perm)
 	}
 
 	if task.Content != nil {
-		return s.createFile(task.Content, destPath)
+		return s.createFile(task.Content, destPath, perm)
 	}
 
 	if task.Speculate {
-		if err := s.speculateFile(destPath); err != nil {
+		if err := s.speculateFile(destPath, perm); err != nil {
 			return valTrue, err
 		}
 
@@ -486,7 +558,7 @@ func (s *session) addTask(input []byte) (string, error) {
 	}
 
 	if task.Mkdir {
-		if err := s.mkdir(destPath); err != nil {
+		if err := s.mkdir(destPath, perm); err != nil {
 			return valFalse, err
 		}
 		return valTrue, err
@@ -636,13 +708,13 @@ func (s *session) listDir(dirPath string) ([]string, error) {
 }
 
 // mkdir returns true only if the directory is newly created.
-func (s *session) mkdir(destPath string) error {
+func (s *session) mkdir(destPath string, perm *os.FileMode) error {
 	start := time.Now()
 	defer func() {
 		log.Debugf("mkdir took %s", time.Since(start))
 	}()
 
-	return s.mkSpeculativeDir(destPath)
+	return s.mkSpeculativeDir(destPath, perm)
 }
 
 func (s *session) existence(destPath string) bool {
@@ -663,20 +735,20 @@ func (s *session) existence(destPath string) bool {
 	return !os.IsNotExist(err)
 }
 
-func (s *session) speculateFile(destPath string) error {
+func (s *session) speculateFile(destPath string, perm *os.FileMode) error {
 	start := time.Now()
 	defer func() {
 		log.Debugf("speculateFile took %s", time.Since(start))
 	}()
 
-	if _, err := s.addSpeculativeFile(destPath); err != nil {
+	if _, err := s.addSpeculativeFile(destPath, perm); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (s *session) createDest(destPath string) (*os.File, error) {
+func (s *session) createDest(destPath string, perm *os.FileMode) (*os.File, error) {
 	start := time.Now()
 	defer func() {
 		log.Debugf("createDest took %s", time.Since(start))
@@ -689,11 +761,52 @@ func (s *session) createDest(destPath string) (*os.File, error) {
 			return nil, f.err
 		}
 
+		if perm == nil {
+			return f.file, nil
+		}
+
+		if f.perm == *perm {
+			return f.file, nil
+		}
+
+		if err := f.file.Chmod(*perm); err != nil {
+			return nil, err
+		}
+
 		return f.file, nil
 	}
 
 	log.Debug("speculative file not found")
-	return os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE, 0666)
+
+	var newPerm os.FileMode
+	if perm == nil {
+		newPerm = 0666
+	} else {
+		newPerm = *perm
+	}
+	file, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE, newPerm)
+	if err != nil {
+		return nil, err
+	}
+
+	if perm == nil {
+		return file, nil
+	}
+
+	st, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if st.Mode().Perm() == *perm {
+		return file, nil
+	}
+
+	if err := file.Chmod(*perm); err != nil {
+		return nil, err
+	}
+
+	return file, nil
 }
 
 func truncateFile(file *os.File, oldBytes, writtenBytes int64) {
@@ -713,7 +826,7 @@ func truncateFile(file *os.File, oldBytes, writtenBytes int64) {
 	file.Truncate(writtenBytes)
 }
 
-func (s *session) copyFile(srcPath, destPath string) (string, error) {
+func (s *session) copyFile(srcPath, destPath string, perm *os.FileMode) (string, error) {
 	openSrc := func() (*os.File, error) {
 		start := time.Now()
 		defer func() {
@@ -729,7 +842,7 @@ func (s *session) copyFile(srcPath, destPath string) (string, error) {
 	}
 	s.openFiles = append(s.openFiles, src)
 
-	dest, err := s.createDest(destPath)
+	dest, err := s.createDest(destPath, perm)
 	if err != nil {
 		return valFalse, err
 	}
@@ -795,8 +908,8 @@ func (s *session) copyFile(srcPath, destPath string) (string, error) {
 	return valTrue, nil
 }
 
-func (s *session) createFile(content []byte, destPath string) (string, error) {
-	dest, err := s.createDest(destPath)
+func (s *session) createFile(content []byte, destPath string, perm *os.FileMode) (string, error) {
+	dest, err := s.createDest(destPath, perm)
 	if err != nil {
 		return valFalse, err
 	}
@@ -853,7 +966,7 @@ func (s *session) done() {
 	s.speculativeDirTree.done()
 }
 
-func (s *session) mkSpeculativeDir(absDirPath string) error {
+func (s *session) mkSpeculativeDir(absDirPath string, perm *os.FileMode) error {
 	if absDirPath[0] != '/' {
 		log.Fatalf("path must be absolute: %s", absDirPath)
 	}
@@ -865,7 +978,7 @@ func (s *session) mkSpeculativeDir(absDirPath string) error {
 			absDirPath)
 	}
 
-	return s.speculativeDirTree.mkDirInternal(strings.Split(absDirPath[1:], "/"))
+	return s.speculativeDirTree.mkDirInternal(strings.Split(absDirPath[1:], "/"), perm)
 }
 
 func (s *session) findSpeculativeDir(absDirPath string) *dirTree {
@@ -881,7 +994,7 @@ func (s *session) findSpeculativeDir(absDirPath string) *dirTree {
 	return s.speculativeDirTree.findDirInternal(strings.Split(absDirPath[1:], "/"))
 }
 
-func (s *session) addSpeculativeFile(absPath string) (*speculativeFile, error) {
+func (s *session) addSpeculativeFile(absPath string, perm *os.FileMode) (*speculativeFile, error) {
 	if absPath[0] != '/' {
 		log.Fatalf("path must be absolute: %s", absPath)
 	}
@@ -891,7 +1004,7 @@ func (s *session) addSpeculativeFile(absPath string) (*speculativeFile, error) {
 		return nil, fmt.Errorf("directory already exists: %s", absPath)
 	}
 
-	return s.speculativeDirTree.addFileInternal(strings.Split(absPath[1:], "/"))
+	return s.speculativeDirTree.addFileInternal(strings.Split(absPath[1:], "/"), perm)
 }
 
 func (s *session) findSpeculativeFile(absPath string) *futureFile {

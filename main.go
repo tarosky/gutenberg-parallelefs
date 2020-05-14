@@ -19,7 +19,7 @@ func main() {
 	log.SetLevel(log.DebugLevel)
 	log.SetOutput(os.Stderr)
 	log.SetFormatter(&log.TextFormatter{
-		TimestampFormat: "2006-01-02T15:04:05Z07:00.000000",
+		TimestampFormat: "2006-01-02T15:04:05-0700.000000",
 	})
 
 	app := &cli.App{

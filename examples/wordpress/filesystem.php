@@ -70,7 +70,7 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
     $bin = defined('PARALLELEFS_PATH') ? PARALLELEFS_PATH : '/usr/local/bin/parallelefs';
     $log = defined('PARALLELEFS_LOG') ? PARALLELEFS_LOG : '/var/log/parallelefs.log';
 
-    $command = "$bin -s $socket_file > $log 2>&1 & echo $!";
+    $command = "$bin -s $socket_file >> $log 2>&1 & echo $!";
     $server_pid = exec($command);
 
     register_shutdown_function(function() use ($server_pid) {

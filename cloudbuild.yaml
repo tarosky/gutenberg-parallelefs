@@ -114,5 +114,4 @@ substitutions:
   _GITHUB_API: https://api.github.com/repos/tarosky/gutenberg-parallelefs
   _GITHUB_UPLOADS: https://uploads.github.com/repos/tarosky/gutenberg-parallelefs
   _GITHUB_RELEASES: https://github.com/tarosky/gutenberg-parallelefs/releases
-  # _MAIN_BRANCH: master
-  _MAIN_BRANCH: dev/harai
+  _MAIN_BRANCH: master

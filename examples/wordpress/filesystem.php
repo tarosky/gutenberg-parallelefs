@@ -254,12 +254,17 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
     for ($i = count($trace) - 1; $i >= 0; $i--) {
       $frame = $trace[$i];
 
-      if (!array_key_exists('class', $frame)) {
+      if (array_key_exists('class', $frame)) {
+        $name = $frame['class'];
+      } else if (array_key_exists('function', $frame)) {
+        $name = $frame['function'];
+      } else {
         continue;
       }
 
-      switch ($frame['class']) {
+      switch ($name) {
       case 'Core_Upgrader':
+      case 'do_core_upgrade':
         $this->speculateCallback = function ($path) {
           if (preg_match(self::CORE_UPGRADE_PATTERN, $path, $matches)) {
             return ABSPATH . $matches[1];
@@ -286,6 +291,12 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
           }
           return null;
         };
+        return;
+      case 'wp_ajax_delete_plugin':
+      case 'wp_ajax_delete_theme':
+      case 'delete_plugins':
+      case 'delete_theme':
+        $this->speculateCallback = null;
         return;
       }
     }

@@ -254,6 +254,17 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
     for ($i = count($trace) - 1; $i >= 0; $i--) {
       $frame = $trace[$i];
 
+      if (array_key_exists('file', $frame)) {
+        if (strstr($frame['file'], '/wp-content/plugins/') !== false) {
+          $this->speculateCallback = null;
+          return;
+        }
+        if (strstr($frame['file'], '/wp-content/themes/') !== false) {
+          $this->speculateCallback = null;
+          return;
+        }
+      }
+
       if (array_key_exists('class', $frame)) {
         $name = $frame['class'];
       } else if (array_key_exists('function', $frame)) {
@@ -296,6 +307,8 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
       case 'wp_ajax_delete_theme':
       case 'delete_plugins':
       case 'delete_theme':
+      case 'wp_can_install_language_pack':
+      case 'WP_Site_Health_Auto_Updates':
         $this->speculateCallback = null;
         return;
       }
@@ -311,16 +324,18 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
   }
 
   public function get_contents($file) {
-    // The existence of $file must be checked in advance.
-
-    self::warn("get_contents called: file: $file");
+    if ($this->speculateCallback) {
+      // The existence of $file must be checked in advance.
+      self::warn("get_contents called: file: $file");
+    }
     return $this->trace_parent('get_contents', $file);
   }
 
   public function get_contents_array($file) {
-    // The existence of $file must be checked in advance.
-
-    self::warn("get_contents_array called: file: $file");
+    if ($this->speculateCallback) {
+      // The existence of $file must be checked in advance.
+      self::warn("get_contents_array called: file: $file");
+    }
     return $this->trace_parent('get_contents_array', $file);
   }
 
@@ -356,20 +371,26 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
   }
 
   public function cwd() {
-    // This won't be called.
-    self::warn("cwd called");
+    if ($this->speculateCallback) {
+      // This won't be called.
+      self::warn("cwd called");
+    }
     return $this->call_parent('cwd');
   }
 
   public function chdir($dir) {
-    // This won't be called.
-    self::warn("chdir called: dir: $dir");
+    if ($this->speculateCallback) {
+      // This won't be called.
+      self::warn("chdir called: dir: $dir");
+    }
     return $this->call_parent('chdir', $dir);
   }
 
   public function chgrp($file, $group, $recursive = false) {
-    // This won't be called.
-    self::warn("chgrp called: file: $file");
+    if ($this->speculateCallback) {
+      // This won't be called.
+      self::warn("chgrp called: file: $file");
+    }
     return $this->call_parent('chgrp', $file, $group, $recursive);
   }
 
@@ -414,8 +435,10 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
   }
 
   public function move($source, $destination, $overwrite = false) {
-    // This won't be called.
-    self::warn("move called: source: $source, destination: $destination");
+    if ($this->speculateCallback) {
+      // This won't be called.
+      self::warn("move called: source: $source, destination: $destination");
+    }
     return $this->trace_parent('move', $source, $destination, $overwrite);
   }
 
@@ -504,8 +527,10 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
   }
 
   public function atime($file) {
-    // This won't be called.
-    self::warn("atime called: file: $file");
+    if ($this->speculateCallback) {
+      // This won't be called.
+      self::warn("atime called: file: $file");
+    }
     return $this->trace_parent('atime', $file);
   }
 
@@ -520,8 +545,10 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
   }
 
   public function touch($file, $time = 0, $atime = 0) {
-    // This won't be called.
-    self::warn("touch called: file: $file");
+    if ($this->speculateCallback) {
+      // This won't be called.
+      self::warn("touch called: file: $file");
+    }
     return $this->trace_parent('touch', $file, $time, $atime);
   }
 
@@ -560,8 +587,10 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
   }
 
   public function rmdir($path, $recursive = false) {
-    // This won't be called.
-    self::warn("rmdir called: path: $path");
+    if ($this->speculateCallback) {
+      // This won't be called.
+      self::warn("rmdir called: path: $path");
+    }
     return $this->delete($path, $recursive);
   }
 

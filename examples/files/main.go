@@ -13,16 +13,16 @@ func main() {
 	log.SetLevel(log.DebugLevel)
 
 	if err := os.MkdirAll("work", os.ModePerm); err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 
 	file, err := os.OpenFile(fileTest1, os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			log.Fatal(err)
+			log.Panic(err)
 		}
 	}()
 

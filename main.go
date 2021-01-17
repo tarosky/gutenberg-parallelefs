@@ -59,7 +59,7 @@ func main() {
 	}
 
 	if err := app.Run(os.Args); err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 }
 
@@ -70,7 +70,7 @@ func listen(socket string) {
 
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 	defer listener.Close()
 	log.Debugf("started listening")

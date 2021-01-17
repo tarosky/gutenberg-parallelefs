@@ -206,7 +206,7 @@ func (t *dirTree) getPath() string {
 
 func (t *dirTree) addFileInternal(pathParts []string, perm *os.FileMode) (*speculativeFile, error) {
 	if len(pathParts) < 1 {
-		log.Fatalf("pathParts must contain at least one element")
+		log.Panicf("pathParts must contain at least one element")
 	}
 
 	if len(pathParts) == 1 {
@@ -233,7 +233,7 @@ func (t *dirTree) addFileInternal(pathParts []string, perm *os.FileMode) (*specu
 
 func (t *dirTree) mkDirInternal(dirParts []string, perm *os.FileMode) error {
 	if len(dirParts) == 0 {
-		log.Fatalf("dirParts must contain at least one element")
+		log.Panicf("dirParts must contain at least one element")
 	}
 
 	if t.speculative {
@@ -339,7 +339,7 @@ func (t *dirTree) done() {
 
 func (t *dirTree) findDirInternal(dirParts []string) *dirTree {
 	if len(dirParts) == 0 {
-		log.Fatalf("dirParts must contain at least one element")
+		log.Panicf("dirParts must contain at least one element")
 	}
 
 	dir, ok := t.childDirs[dirParts[0]]
@@ -356,7 +356,7 @@ func (t *dirTree) findDirInternal(dirParts []string) *dirTree {
 
 func (t *dirTree) useSpeculativeFile(pathParts []string) *futureFile {
 	if len(pathParts) < 1 {
-		log.Fatalf("pathParts must contain at least one element")
+		log.Panicf("pathParts must contain at least one element")
 	}
 
 	if len(pathParts) == 1 {
@@ -968,7 +968,7 @@ func (s *session) done() {
 
 func (s *session) mkSpeculativeDir(absDirPath string, perm *os.FileMode) error {
 	if absDirPath[0] != '/' {
-		log.Fatalf("path must be absolute: %s", absDirPath)
+		log.Panicf("path must be absolute: %s", absDirPath)
 	}
 
 	// Root directory
@@ -983,7 +983,7 @@ func (s *session) mkSpeculativeDir(absDirPath string, perm *os.FileMode) error {
 
 func (s *session) findSpeculativeDir(absDirPath string) *dirTree {
 	if absDirPath[0] != '/' {
-		log.Fatalf("path must be absolute: %s", absDirPath)
+		log.Panicf("path must be absolute: %s", absDirPath)
 	}
 
 	// Root directory
@@ -996,7 +996,7 @@ func (s *session) findSpeculativeDir(absDirPath string) *dirTree {
 
 func (s *session) addSpeculativeFile(absPath string, perm *os.FileMode) (*speculativeFile, error) {
 	if absPath[0] != '/' {
-		log.Fatalf("path must be absolute: %s", absPath)
+		log.Panicf("path must be absolute: %s", absPath)
 	}
 
 	// Root directory
@@ -1028,7 +1028,7 @@ func (s *session) findSpeculativeFile(absPath string) *futureFile {
 
 func (s *session) useSpeculativeFile(absPath string) *futureFile {
 	if absPath[0] != '/' {
-		log.Fatalf("path must be absolute: %s", absPath)
+		log.Panicf("path must be absolute: %s", absPath)
 	}
 
 	// Root directory

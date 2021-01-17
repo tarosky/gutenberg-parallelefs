@@ -34,14 +34,14 @@ func main() {
 	}
 
 	if err := app.Run(os.Args); err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 }
 
 func connect(socket string) {
 	conn, err := net.Dial("unix", socket)
 	if err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 	defer func() {
 		if err := conn.Close(); err != nil {

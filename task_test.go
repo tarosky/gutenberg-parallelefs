@@ -46,7 +46,7 @@ const (
 func createTestFS() *testFS {
 	wd, err := os.Getwd()
 	if err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 
 	return &testFS{
@@ -73,7 +73,7 @@ func b64String(content string) string {
 func jsonSortedSlice(content string) []string {
 	data := []string{}
 	if err := json.Unmarshal([]byte(content), &data); err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 
 	sort.Strings(data)
@@ -98,7 +98,7 @@ func newTestFile(path string) *testFile {
 func (f *testFile) read() string {
 	bs, err := ioutil.ReadFile(f.path)
 	if err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 
 	return string(bs)
@@ -106,14 +106,14 @@ func (f *testFile) read() string {
 
 func (f *testFile) write(content string) *testFile {
 	if err := ioutil.WriteFile(f.path, []byte(content), 0644); err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 	return f
 }
 
 func (f *testFile) chmod(mode os.FileMode) *testFile {
 	if err := os.Chmod(f.path, mode); err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 	return f
 }
@@ -121,7 +121,7 @@ func (f *testFile) chmod(mode os.FileMode) *testFile {
 func (f *testFile) mode() os.FileMode {
 	s, err := os.Stat(f.path)
 	if err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 	return s.Mode().Perm()
 }
@@ -132,10 +132,10 @@ func (f *testFile) exists() bool {
 		if os.IsNotExist(err) {
 			return false
 		}
-		log.Fatal(err)
+		log.Panic(err)
 	}
 	if st.IsDir() {
-		log.Fatalf("the path is not file: %s", f.path)
+		log.Panicf("the path is not file: %s", f.path)
 	}
 	return true
 }
@@ -153,7 +153,7 @@ func newTestDirectory(path string) *testDirectory {
 func (d *testDirectory) ls() []string {
 	fis, err := ioutil.ReadDir(d.path)
 	if err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 
 	names := make([]string, 0, len(fis))
@@ -167,14 +167,14 @@ func (d *testDirectory) ls() []string {
 
 func (d *testDirectory) create() *testDirectory {
 	if err := os.Mkdir(d.path, 0755); err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 	return d
 }
 
 func (d *testDirectory) chmod(mode os.FileMode) *testDirectory {
 	if err := os.Chmod(d.path, mode); err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 	return d
 }
@@ -185,10 +185,10 @@ func (d *testDirectory) exists() bool {
 		if os.IsNotExist(err) {
 			return false
 		}
-		log.Fatal(err)
+		log.Panic(err)
 	}
 	if !st.IsDir() {
-		log.Fatalf("the path is not directory: %s", d.path)
+		log.Panicf("the path is not directory: %s", d.path)
 	}
 	return true
 }
@@ -196,7 +196,7 @@ func (d *testDirectory) exists() bool {
 func (d *testDirectory) mode() os.FileMode {
 	s, err := os.Stat(d.path)
 	if err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 	return s.Mode().Perm()
 }

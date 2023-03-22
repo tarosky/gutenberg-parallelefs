@@ -7,16 +7,15 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	log "github.com/sirupsen/logrus"
 
 	"github.com/urfave/cli/v2"
 )
 
-type unit struct{}
-
 func main() {
-	log.SetLevel(log.DebugLevel)
+	log.SetLevel(log.InfoLevel)
 	log.SetOutput(os.Stderr)
 	log.SetFormatter(&log.TextFormatter{
 		TimestampFormat: "2006-01-02T15:04:05-0700.000000",
@@ -37,11 +36,20 @@ func main() {
 				Required: false,
 				Usage:    "Intentionally panic at the end of program for debugging",
 			},
+			&cli.BoolFlag{
+				Name:     "debug",
+				Required: false,
+				Usage:    "Enbale debug log",
+			},
 		},
 		Action: func(c *cli.Context) error {
 			socket, err := filepath.Abs(c.Path("socket"))
 			if err != nil {
 				return err
+			}
+
+			if c.Bool("debug") {
+				log.SetLevel(log.DebugLevel)
 			}
 
 			listen(socket)
@@ -64,9 +72,8 @@ func main() {
 }
 
 func listen(socket string) {
-	if err := os.Remove(socket); err != nil {
-		// Ignore error
-	}
+	// Ignore error
+	_ = os.Remove(socket)
 
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
@@ -99,8 +106,8 @@ func listen(socket string) {
 }
 
 func interruptionNotification() <-chan os.Signal {
-	sigCh := make(chan os.Signal)
-	signal.Notify(sigCh, os.Interrupt, os.Kill)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 	return sigCh
 }
 
@@ -125,7 +132,6 @@ func handleConnection(ctx context.Context, conn io.ReadWriter) {
 			}
 
 			log.Debugf("received: %d bytes", len(msg))
-			log.Debugf("content: '%s'", string(msg))
 
 			// Empty request means the end of this session.
 			if len(msg) == 0 {
@@ -135,6 +141,7 @@ func handleConnection(ctx context.Context, conn io.ReadWriter) {
 				continue
 			}
 
+			log.Infof("req: %s", string(msg))
 			res, err := sess.addTask(msg)
 			if err != nil {
 				log.Error(err)
@@ -143,7 +150,7 @@ func handleConnection(ctx context.Context, conn io.ReadWriter) {
 			resbs := []byte(res + "\n")
 			conn.Write(resbs)
 			log.Debugf("sent: %d bytes", len(resbs))
-			log.Debugf("content: '%s'", string(resbs))
+			log.Infof("res: %s", string(resbs))
 		}
 	}
 }

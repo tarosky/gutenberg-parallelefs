@@ -172,13 +172,6 @@ func (d *testDirectory) create() *testDirectory {
 	return d
 }
 
-func (d *testDirectory) chmod(mode os.FileMode) *testDirectory {
-	if err := os.Chmod(d.path, mode); err != nil {
-		log.Panic(err)
-	}
-	return d
-}
-
 func (d *testDirectory) exists() bool {
 	st, err := os.Stat(d.path)
 	if err != nil {

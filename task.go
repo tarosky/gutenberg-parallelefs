@@ -32,7 +32,7 @@ type task struct {
 }
 
 type speculativeFile struct {
-	name   string
+	// name   string
 	parent *dirTree
 	file   *futureFile
 	done   <-chan *futureFile

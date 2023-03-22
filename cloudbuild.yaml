@@ -108,7 +108,7 @@ substitutions:
   #  --location=global \
   #  --keyring=cloudbuild \
   #  --key=github_token | base64 -w 0
-  _ENCRYPTED_GITHUB_TOKEN: CiQAXggxFtqKUL8rS3z7QaqmAw+t5+1braaP09tTjFQg+ysJwkkSUQClibR/xVhEoki9ZuJEtW7F0N1O8MeCHY5d0sNlgot/UeqGfI2oYtSkFFo82FldRzyb7SXuEBD3bKZQCozt1kmtq/EsROhvLfsO6Jg4r+/uiA==
+  _ENCRYPTED_GITHUB_TOKEN: CiQAXggxFlZO0lAp/hGWfwr0RvWjEv6WHir+iu9iMhizQLKk7lgSUQABGSIRu7qIi1IMt1ub3ahxfKXJDC//XzpD99uTT9ZdIjKx1dsK6PXT2RaKhyoiY2MNu13wG7Kuj0S+eSgeYPmyvsqzCoq9ucl/4SzBlC11XQ==
 
   _GITHUB_USER: taroskybot
   _GITHUB_API: https://api.github.com/repos/tarosky/gutenberg-parallelefs

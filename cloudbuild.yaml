@@ -30,7 +30,7 @@ steps:
       --keyring=cloudbuild \
       --key=github_token
 
-- name: golang:1.14
+- name: golang:1.20
   args:
   - go
   - build

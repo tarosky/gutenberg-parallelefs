@@ -4,9 +4,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"sort"
+	"strings"
 	"testing"
 
 	log "github.com/sirupsen/logrus"
@@ -30,9 +30,8 @@ const (
 	testDir1Dir2File1 = "subdir/anotherdir/test.txt"
 	testDir1Dir2File2 = "subdir/anotherdir/test2.txt"
 
-	testContent1     = "test-string"
-	testContent2     = "another-text"
-	testLongContent1 = "long-long-test-string"
+	testContent1 = "test-string"
+	testContent2 = "another-text"
 
 	testDirPerm1  = os.FileMode(0707)
 	testDirPerm2  = os.FileMode(0770)
@@ -42,6 +41,9 @@ const (
 	testResTrue  = "true"
 	testResFalse = "false"
 )
+
+// 1MiB string
+var testLongContent1 = strings.Repeat("long-test-string", 16*1024)
 
 func createTestFS() *testFS {
 	wd, err := os.Getwd()
@@ -96,7 +98,7 @@ func newTestFile(path string) *testFile {
 }
 
 func (f *testFile) read() string {
-	bs, err := ioutil.ReadFile(f.path)
+	bs, err := os.ReadFile(f.path)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -105,7 +107,7 @@ func (f *testFile) read() string {
 }
 
 func (f *testFile) write(content string) *testFile {
-	if err := ioutil.WriteFile(f.path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(f.path, []byte(content), 0644); err != nil {
 		log.Panic(err)
 	}
 	return f
@@ -151,7 +153,7 @@ func newTestDirectory(path string) *testDirectory {
 }
 
 func (d *testDirectory) ls() []string {
-	fis, err := ioutil.ReadDir(d.path)
+	fis, err := os.ReadDir(d.path)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -458,6 +460,19 @@ func Test_CreateFile(t *testing.T) {
 
 		p.sess.done()
 		p.assert.Equal(testContent1, p.fs.file(testFile1).read())
+	}))
+
+	t.Run("long input", run(func(p *testpack) {
+		res, err := p.sess.addTask(taskf(
+			`{"dest": "%s", "content_b64": "%s"}`,
+			p.fs.path(testFile1),
+			b64String(testLongContent1)))
+
+		p.assert.NoError(err)
+		p.assert.Equal(testResTrue, res)
+
+		p.sess.done()
+		p.assert.Equal(testLongContent1, p.fs.file(testFile1).read())
 	}))
 
 	t.Run("overwrite", run(func(p *testpack) {

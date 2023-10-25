@@ -286,12 +286,10 @@ func (t *dirTree) clean() error {
 	eg := &errgroup.Group{}
 
 	for _, f := range t.childFiles {
-		f := f
 		eg.Go(f.disposeUnused)
 	}
 
 	for _, d := range t.childDirs {
-		d := d
 		eg.Go(d.clean)
 	}
 

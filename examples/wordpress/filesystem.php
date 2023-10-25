@@ -485,8 +485,8 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
   public function move($source, $destination, $overwrite = false)
   {
     if ($this->speculateCallback) {
-      // This won't be called.
-      self::warn("move called: source: $source, destination: $destination");
+      // Use core's fallback mechanism.
+      return false;
     }
     return $this->trace_parent('move', $source, $destination, $overwrite);
   }

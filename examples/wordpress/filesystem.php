@@ -182,7 +182,7 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
       } finally {
         self::log_trace($t, microtime(true), $caller);
       }
-    }, [$this, "parent::$method"], ...$args);
+    }, ['parent', $method], ...$args);
   }
 
   private function trace_func($func)
@@ -202,7 +202,7 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
   {
     return $this->call_with_decorator(function ($func) {
       return call_user_func($func);
-    }, [$this, "parent::$method"], ...$args);
+    }, ['parent', $method], ...$args);
   }
 
   public function abspath()
@@ -345,6 +345,7 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
         case 'delete_theme':
         case 'wp_can_install_language_pack':
         case 'WP_Site_Health_Auto_Updates':
+        case '_wp_delete_all_temp_backups':
           $this->speculateCallback = null;
           return;
       }

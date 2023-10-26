@@ -8,6 +8,7 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
   private const CORE_UPGRADE_PATTERN = '%^' . self::UPGRADE_PATH . '(?:wp_|wordpress-)[^/]+/wordpress/(.*)$%';
   private const PLUGIN_UPGRADE_PATTERN = '%^' . self::UPGRADE_PATH . '[^/]+/(.*)$%';
   private const THEME_UPGRADE_PATTERN = '%^' . self::UPGRADE_PATH . '[^/]+/(.*)$%';
+  private const MAINTENANCE_FILE = ABSPATH . '.maintenance';
 
   private $nested = false;
   private $socket = null;
@@ -400,6 +401,10 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
       return parent::put_contents($file, $contents, $mode);
     }
 
+    if (self::MAINTENANCE_FILE === $file) {
+      return parent::put_contents($file, $contents, $mode);
+    }
+
     return $this->trace_func(function () use ($file, $contents, $mode) {
       if ($this->speculateCallback) {
         $speculate_path = call_user_func($this->speculateCallback, $file);
@@ -520,6 +525,10 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
       return parent::delete($file, $recursive, $type);
     }
 
+    if (self::MAINTENANCE_FILE === $file) {
+      return parent::delete($file, $recursive, $type);
+    }
+
     return $this->trace_func(function () use ($file, $recursive, $type) {
       if (strpos($file, self::UPGRADE_PATH) === 0) {
         // `upgrade` dir is assumed to be on fast EBS volume.
@@ -543,6 +552,10 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
   public function exists($file)
   {
     if ($this->finalized) {
+      return parent::exists($file);
+    }
+
+    if (self::MAINTENANCE_FILE === $file) {
       return parent::exists($file);
     }
 

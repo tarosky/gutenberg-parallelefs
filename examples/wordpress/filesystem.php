@@ -12,6 +12,8 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
   private $nested = false;
   private $socket = null;
   private $speculateCallback = null;
+  private $finalized = false;
+  private $server_pid;
 
   private static function mktemp()
   {
@@ -79,13 +81,10 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
     $log = defined('PARALLELEFS_LOG') ? PARALLELEFS_LOG : '/var/log/parallelefs.log';
 
     $command = "$bin -s $socket_file >> $log 2>&1 & echo $!";
-    $server_pid = exec($command);
+    $this->server_pid = exec($command);
 
-    register_shutdown_function(function () use ($server_pid) {
-      if (!$this->finalize()) {
-        self::error('failed to finalize connection to parallelefs');
-      }
-      exec("kill $server_pid");
+    register_shutdown_function(function () {
+      $this->finalize();
     });
 
     $socket = socket_create(AF_UNIX, SOCK_STREAM, 0);
@@ -139,7 +138,15 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
 
   public function finalize()
   {
-    return $this->run_on_parallelefs("\n");
+    if ($this->finalized) {
+      return;
+    }
+
+    if (true !== $this->run_on_parallelefs("\n")) {
+      self::error('failed to finalize connection to parallelefs');
+    }
+    exec("kill $this->server_pid");
+    $this->finalized = true;
   }
 
   private function call_with_decorator($decorator, $func, ...$args)
@@ -174,28 +181,36 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
 
   private function trace_parent($method, ...$args)
   {
-    $caller = debug_backtrace()[1]['function'];
-    return $this->call_with_decorator(function ($func) use ($caller) {
-      $t = microtime(true);
-      try {
-        return call_user_func($func);
-      } finally {
-        self::log_trace($t, microtime(true), $caller);
-      }
-    }, ['parent', $method], ...$args);
+    if (defined('PARALLELEFS_DEBUG') && PARALLELEFS_DEBUG) {
+      $caller = debug_backtrace()[1]['function'];
+      return $this->call_with_decorator(function ($func) use ($caller) {
+        $t = microtime(true);
+        try {
+          return call_user_func($func);
+        } finally {
+          self::log_trace($t, microtime(true), $caller);
+        }
+      }, ['parent', $method], ...$args);
+    }
+
+    return call_user_func(['parent', $method], ...$args);
   }
 
   private function trace_func($func)
   {
-    $caller = debug_backtrace()[1]['function'];
-    return $this->call_with_decorator(function ($func) use ($caller) {
-      $t = microtime(true);
-      try {
-        return call_user_func($func);
-      } finally {
-        self::log_trace($t, microtime(true), $caller);
-      }
-    }, $func);
+    if (defined('PARALLELEFS_DEBUG') && PARALLELEFS_DEBUG) {
+      $caller = debug_backtrace()[1]['function'];
+      return $this->call_with_decorator(function ($func) use ($caller) {
+        $t = microtime(true);
+        try {
+          return call_user_func($func);
+        } finally {
+          self::log_trace($t, microtime(true), $caller);
+        }
+      }, $func);
+    }
+
+    return call_user_func($func);
   }
 
   private function call_parent($method, ...$args)
@@ -381,6 +396,10 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
 
   public function put_contents($file, $contents, $mode = false)
   {
+    if ($this->finalized) {
+      return parent::put_contents($file, $contents, $mode);
+    }
+
     return $this->trace_func(function () use ($file, $contents, $mode) {
       if ($this->speculateCallback) {
         $speculate_path = call_user_func($this->speculateCallback, $file);
@@ -460,6 +479,10 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
 
   public function copy($source, $destination, $overwrite = false, $mode = false)
   {
+    if ($this->finalized) {
+      return parent::copy($source, $destination, $overwrite, $mode);
+    }
+
     return $this->trace_func(function () use ($source, $destination, $overwrite, $mode) {
       if (strpos($destination, self::UPGRADE_PATH) === 0) {
         return parent::copy($source, $destination, $overwrite, $mode);
@@ -493,10 +516,14 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
 
   public function delete($file, $recursive = false, $type = false)
   {
+    if ($this->finalized) {
+      return parent::delete($file, $recursive, $type);
+    }
+
     return $this->trace_func(function () use ($file, $recursive, $type) {
       if (strpos($file, self::UPGRADE_PATH) === 0) {
         // `upgrade` dir is assumed to be on fast EBS volume.
-        return parent::delete($file);
+        return parent::delete($file, $recursive, $type);
       }
 
       if ($type == 'f' || $this->is_file($file) || (!$recursive && $this->is_dir($file))) {
@@ -515,6 +542,10 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
 
   public function exists($file)
   {
+    if ($this->finalized) {
+      return parent::exists($file);
+    }
+
     return $this->trace_func(function () use ($file) {
       if (strpos($file, self::UPGRADE_PATH) === 0) {
         // `upgrade` dir is assumed to be on fast EBS volume.
@@ -530,6 +561,10 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
 
   public function is_file($file)
   {
+    if ($this->finalized) {
+      return parent::is_file($file);
+    }
+
     return $this->trace_func(function () use ($file) {
       if (strpos($file, self::UPGRADE_PATH) === 0) {
         // `upgrade` dir is assumed to be on fast EBS volume.
@@ -551,6 +586,10 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
 
   public function is_dir($path)
   {
+    if ($this->finalized) {
+      return parent::is_dir($path);
+    }
+
     return $this->trace_func(function () use ($path) {
       if (strpos($path, self::UPGRADE_PATH) === 0) {
         // `upgrade` dir is assumed to be on fast EBS volume.
@@ -613,6 +652,10 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
 
   public function mkdir($path, $chmod = false, $chown = false, $chgrp = false)
   {
+    if ($this->finalized) {
+      return parent::mkdir($path, $chmod, $chown, $chgrp);
+    }
+
     return $this->trace_func(function () use ($path, $chmod, $chown, $chgrp) {
       if (strpos($path, self::UPGRADE_PATH) === 0) {
         // `upgrade` dir is assumed to be on fast EBS volume.
@@ -652,11 +695,16 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct
       // This won't be called.
       self::warn("rmdir called: path: $path");
     }
-    return $this->delete($path, $recursive);
+
+    return parent::delete($path, $recursive);
   }
 
   public function dirlist($path, $include_hidden = true, $recursive = false)
   {
+    if ($this->finalized) {
+      return parent::dirlist($path, $include_hidden, $recursive);
+    }
+
     return $this->trace_func(function () use ($path, $include_hidden, $recursive) {
       if (strpos($path, self::UPGRADE_PATH) === 0) {
         // `upgrade` dir is assumed to be on fast EBS volume.

@@ -468,7 +468,7 @@ func (t *dirTree) delete(recursive bool) (bool, error) {
 }
 
 type session struct {
-	openFiles          []*os.File
+	wg                 *sync.WaitGroup
 	finalizeMux        *sync.Mutex
 	finalized          bool
 	speculativeDirTree *dirTree
@@ -493,7 +493,7 @@ func (c *content) UnmarshalJSON(data []byte) error {
 
 func newSession() *session {
 	return &session{
-		openFiles:          make([]*os.File, 0),
+		wg:                 &sync.WaitGroup{},
 		finalizeMux:        &sync.Mutex{},
 		finalized:          false,
 		speculativeDirTree: newDirTree("", nil, false),
@@ -838,13 +838,29 @@ func (s *session) copyFile(srcPath, destPath string, perm *os.FileMode) (string,
 	if err != nil {
 		return valFalse, err
 	}
-	s.openFiles = append(s.openFiles, src)
+	defer func() {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			if err := src.Close(); err != nil {
+				log.Errorf("failed to close: %s", srcPath)
+			}
+		}()
+	}()
 
 	dest, err := s.createDest(destPath, perm)
 	if err != nil {
 		return valFalse, err
 	}
-	s.openFiles = append(s.openFiles, dest)
+	defer func() {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			if err := dest.Close(); err != nil {
+				log.Errorf("failed to close: %s", destPath)
+			}
+		}()
+	}()
 
 	destStat, err := dest.Stat()
 	if err != nil {
@@ -911,7 +927,15 @@ func (s *session) createFile(content []byte, destPath string, perm *os.FileMode)
 	if err != nil {
 		return valFalse, err
 	}
-	s.openFiles = append(s.openFiles, dest)
+	defer func() {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			if err := dest.Close(); err != nil {
+				log.Errorf("failed to close: %s", destPath)
+			}
+		}()
+	}()
 
 	destStat, err := dest.Stat()
 	if err != nil {
@@ -958,6 +982,8 @@ func (s *session) finalize() {
 	if err := s.speculativeDirTree.clean(); err != nil {
 		log.Error(err)
 	}
+
+	s.wg.Wait()
 }
 
 func (s *session) done() {

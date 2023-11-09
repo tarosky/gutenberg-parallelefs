@@ -1,0 +1,20 @@
+root = true
+
+[*]
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+# In general, space is predominant over tab.
+indent_style = space
+# Support deep nest.
+indent_size = 2
+
+[{composer.json,phpcs.ruleset.xml}]
+indent_size = 4
+
+[*.php]
+indent_style = tab
+
+[*.go]
+indent_size = 4
+indent_style = tab

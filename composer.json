@@ -1,0 +1,42 @@
+{
+    "name": "tarosky/parallelefs",
+    "type": "wordpress-plugin",
+    "description": "",
+    "homepage": "https://github.com/tarosky/parallelefs",
+    "license": "GPL-3.0-or-later",
+    "authors": [
+        {
+            "name": "Harai Akihiro",
+            "email": "akihiro.harai@tarosky.co.jp",
+            "homepage": "https://tarosky.co.jp"
+        }
+    ],
+    "minimum-stability": "stable",
+    "require": {
+        "php": ">=7.4"
+    },
+    "require-dev": {
+        "squizlabs/php_codesniffer": "*",
+        "wp-coding-standards/wpcs": "*",
+        "phpcompatibility/php-compatibility": "*",
+        "dealerdirect/phpcodesniffer-composer-installer": "*",
+        "phpcompatibility/phpcompatibility-wp": "*"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        }
+    },
+    "scripts": {
+        "lint": [
+            "phpcs --standard=phpcs.ruleset.xml $(find ./ -name '*.php')"
+        ],
+        "fix": [
+            "phpcbf --standard=phpcs.ruleset.xml $(find ./ -name '*.php')"
+        ]
+    },
+    "support": {
+        "issues": "https://github.com/tarosky/parallelefs/issues"
+    }
+}

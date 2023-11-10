@@ -32,6 +32,6 @@
 
     <arg name="extensions" value="php" />
 
-	<exclude-pattern>*/vendor/*</exclude-pattern>
+	<exclude-pattern>*/phpvendor/*</exclude-pattern>
 	<exclude-pattern>*/work/*</exclude-pattern>
 </ruleset>

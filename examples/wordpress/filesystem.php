@@ -59,7 +59,7 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
 	}
 
 	private static function debug( $message ) {
-		if ( defined( 'PARALLELEFS_DEBUG' ) && PARALLELEFS_DEBUG ) {
+		if ( defined( 'PARALLELEFS_DEBUG' ) && constant( 'PARALLELEFS_DEBUG' ) ) {
 			error_log( "[WP_Filesystem_Parallelefs debug]$message" );
 		}
 	}
@@ -71,8 +71,8 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
 		$temp        = self::mktemp();
 		$socket_file = "$temp/parallelefs.sock";
 
-		$bin = defined( 'PARALLELEFS_PATH' ) ? PARALLELEFS_PATH : '/usr/local/bin/parallelefs';
-		$log = defined( 'PARALLELEFS_LOG' ) ? PARALLELEFS_LOG : '/var/log/parallelefs.log';
+		$bin = defined( 'PARALLELEFS_PATH' ) ? constant( 'PARALLELEFS_PATH' ) : '/usr/local/bin/parallelefs';
+		$log = defined( 'PARALLELEFS_LOG' ) ? constant( 'PARALLELEFS_LOG' ) : '/var/log/parallelefs.log';
 
 		$command          = "$bin -s $socket_file >> $log 2>&1 & echo $!";
 		$this->server_pid = exec( $command );
@@ -169,7 +169,7 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
 	}
 
 	private function trace_parent( $method, ...$args ) {
-		if ( defined( 'PARALLELEFS_DEBUG' ) && PARALLELEFS_DEBUG ) {
+		if ( defined( 'PARALLELEFS_DEBUG' ) && constant( 'PARALLELEFS_DEBUG' ) ) {
 			$caller = debug_backtrace()[1]['function'];
 			return $this->call_with_decorator(function ( $func ) use ( $caller ) {
 				$t = microtime( true );
@@ -185,7 +185,7 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
 	}
 
 	private function trace_func( $func ) {
-		if ( defined( 'PARALLELEFS_DEBUG' ) && PARALLELEFS_DEBUG ) {
+		if ( defined( 'PARALLELEFS_DEBUG' ) && constant( 'PARALLELEFS_DEBUG' ) ) {
 			$caller = debug_backtrace()[1]['function'];
 			return $this->call_with_decorator(function ( $func ) use ( $caller ) {
 				$t = microtime( true );

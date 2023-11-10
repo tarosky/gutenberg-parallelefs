@@ -1,6 +1,6 @@
 {
     "name": "tarosky/parallelefs",
-    "type": "wordpress-plugin",
+    "type": "library",
     "description": "",
     "homepage": "https://github.com/tarosky/parallelefs",
     "license": "GPL-3.0-or-later",
@@ -26,7 +26,8 @@
         "sort-packages": true,
         "allow-plugins": {
             "dealerdirect/phpcodesniffer-composer-installer": true
-        }
+        },
+        "vendor-dir": "phpvendor"
     },
     "scripts": {
         "lint": [

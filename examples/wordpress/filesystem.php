@@ -67,37 +67,6 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
 	public function __construct( $arg ) {
 		// This class pretends to be "direct" method for compatibility.
 		parent::__construct( $arg );
-
-		$temp        = self::mktemp();
-		$socket_file = "$temp/parallelefs.sock";
-
-		$bin = defined( 'PARALLELEFS_PATH' ) ? constant( 'PARALLELEFS_PATH' ) : '/usr/local/bin/parallelefs';
-		$log = defined( 'PARALLELEFS_LOG' ) ? constant( 'PARALLELEFS_LOG' ) : '/var/log/parallelefs.log';
-
-		$command          = "$bin -s $socket_file >> $log 2>&1 & echo $!";
-		$this->server_pid = exec( $command );
-
-		register_shutdown_function(function () {
-			$this->finalize();
-		});
-
-		$socket = socket_create( AF_UNIX, SOCK_STREAM, 0 );
-		if ( false === $socket ) {
-			self::error( 'failed to create socket for WP_Filesystem_Parallelefs' );
-			return;
-		}
-
-		if ( ! self::socket_exists( $socket_file ) ) {
-			self::error( 'failed to find a socket file created by parallelefs' );
-			return;
-		}
-
-		if ( ! socket_connect( $socket, $socket_file ) ) {
-			self::error( 'failed to connect to parallelefs' );
-			return;
-		}
-
-		$this->socket = $socket;
 	}
 
 	private static function encode_parallelefs_data( $value ) {
@@ -342,7 +311,42 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
 	}
 
 	public function connect() {
+		if ( null === $this->socket ) {
+			self::error( 'connection already established' );
+			return false;
+		}
+
+		$socket_file = self::mktemp() . '/parallelefs.sock';
+
+		$bin = defined( 'PARALLELEFS_PATH' ) ? constant( 'PARALLELEFS_PATH' ) : '/usr/local/bin/parallelefs';
+		$log = defined( 'PARALLELEFS_LOG' ) ? constant( 'PARALLELEFS_LOG' ) : '/var/log/parallelefs.log';
+
+		$this->server_pid = exec( "$bin -s $socket_file >> $log 2>&1 & echo $!" );
+
+		register_shutdown_function(function () {
+			$this->finalize();
+		});
+
+		$socket = socket_create( AF_UNIX, SOCK_STREAM, 0 );
+		if ( false === $socket ) {
+			self::error( 'failed to create socket for WP_Filesystem_Parallelefs' );
+			return false;
+		}
+
+		if ( ! self::socket_exists( $socket_file ) ) {
+			self::error( 'failed to find a socket file created by parallelefs' );
+			return false;
+		}
+
+		if ( ! socket_connect( $socket, $socket_file ) ) {
+			self::error( 'failed to connect to parallelefs' );
+			return false;
+		}
+
+		$this->socket = $socket;
+
 		$this->updateSpeculationCallback();
+
 		return $this->call_parent( 'connect' );
 	}
 

@@ -178,10 +178,10 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
 				} finally {
 					self::log_trace( $t, microtime( true ), $caller );
 				}
-			}, array( 'parent', $method ), ...$args);
+			}, array( parent::class, $method ), ...$args);
 		}
 
-		return call_user_func( array( 'parent', $method ), ...$args );
+		return call_user_func( array( parent::class, $method ), ...$args );
 	}
 
 	private function trace_func( $func ) {
@@ -203,7 +203,7 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
 	private function call_parent( $method, ...$args ) {
 		return $this->call_with_decorator(function ( $func ) {
 			return call_user_func( $func );
-		}, array( 'parent', $method ), ...$args);
+		}, array( parent::class, $method ), ...$args);
 	}
 
 	public function abspath() {

@@ -311,7 +311,7 @@ class WP_Filesystem_Parallelefs extends WP_Filesystem_Direct {
 	}
 
 	public function connect() {
-		if ( null === $this->socket ) {
+		if ( null !== $this->socket ) {
 			self::error( 'connection already established' );
 			return false;
 		}

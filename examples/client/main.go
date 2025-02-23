@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"syscall"
 
 	log "github.com/sirupsen/logrus"
 
@@ -49,8 +50,8 @@ func connect(socket string) {
 		}
 	}()
 
-	sigCh := make(chan os.Signal)
-	signal.Notify(sigCh, os.Interrupt, os.Kill)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 
 	inputCh := make(chan string)
 	responseCh := make(chan string)

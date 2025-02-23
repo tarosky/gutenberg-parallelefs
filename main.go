@@ -111,6 +111,8 @@ func interruptionNotification() <-chan os.Signal {
 	return sigCh
 }
 
+const MaxLogContent = 1000
+
 func handleConnection(ctx context.Context, conn io.ReadWriter) {
 	sess := newSession()
 	defer sess.finalize()
@@ -141,7 +143,7 @@ func handleConnection(ctx context.Context, conn io.ReadWriter) {
 				continue
 			}
 
-			log.Infof("req: %s", string(msg))
+			log.Infof("req: %s", string(msg)[0:min(len(msg), MaxLogContent)])
 			res, err := sess.addTask(msg)
 			if err != nil {
 				log.Error(err)
@@ -150,7 +152,7 @@ func handleConnection(ctx context.Context, conn io.ReadWriter) {
 			resbs := []byte(res + "\n")
 			conn.Write(resbs)
 			log.Debugf("sent: %d bytes", len(resbs))
-			log.Infof("res: %s", string(resbs))
+			log.Infof("res: %s", string(resbs)[0:min(len(resbs), MaxLogContent)])
 		}
 	}
 }

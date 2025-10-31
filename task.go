@@ -67,7 +67,17 @@ func (f *speculativeFile) disposeUnused() error {
 	}
 
 	if fut.isNew {
-		if err := os.Remove(fut.file.Name()); err != nil {
+		// The path might contain symbolic links. In that case, it is the target file
+		// that must be removed.
+		//
+		// While the safest approach is to resolve the path as soon as it is received,
+		// the resolving process contains multiple lstat() syscalls,
+		// which is very slow on EFS.
+		path, err := resolveSymlinks(fut.file.Name())
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(path); err != nil {
 			return err
 		}
 	}
@@ -94,22 +104,54 @@ func newDirTree(name string, parent *dirTree, speculative bool) *dirTree {
 	}
 }
 
+func followLastSymlink(path string) (string, error) {
+	lstat, err := os.Lstat(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+
+		return path, nil
+	}
+
+	if isSymlink(lstat) {
+		path, err := resolveSymlinks(path)
+		if err != nil {
+			return "", err
+		}
+
+		return path, nil
+	}
+
+	return path, nil
+}
+
 func createDirTree(parent *dirTree, name string, speculate bool) (*dirTree, error) {
 	path := parent.getPath() + "/" + name
 	stat, err := os.Stat(path)
-	if err != nil {
-		if err := os.Mkdir(path, 0755); err != nil {
-			return nil, err
+	if err == nil {
+		if stat.IsDir() {
+			return newDirTree(name, parent, false), nil
 		}
-		return newDirTree(name, parent, speculate), nil
+
+		return nil, fmt.Errorf(
+			"cannot create directory: file already exists: %s", path)
 	}
 
-	if stat.IsDir() {
-		return newDirTree(name, parent, false), nil
+	if !os.IsNotExist(err) {
+		return nil, err
 	}
 
-	return nil, fmt.Errorf(
-		"cannot create directory: file already exists: %s", path)
+	path, err = followLastSymlink(path)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.Mkdir(path, 0755); err != nil {
+		return nil, err
+	}
+
+	return newDirTree(name, parent, speculate), nil
 }
 
 func (t *dirTree) speculateFile(name string, perm *os.FileMode) *speculativeFile {
@@ -251,6 +293,11 @@ func (t *dirTree) mkDirInternal(dirParts []string, perm *os.FileMode) error {
 			newPerm = *perm
 		}
 
+		path, err := followLastSymlink(path)
+		if err != nil {
+			return err
+		}
+
 		if err := os.Mkdir(path, newPerm); err != nil {
 			return err
 		}
@@ -317,6 +364,16 @@ func (t *dirTree) clean() error {
 
 	if _, err := dir.Readdirnames(1); err != nil {
 		if err == io.EOF {
+			// The path might contain symbolic links. In that case, it is the target dir
+			// that must be removed.
+			//
+			// While the safest approach is to resolve the path as soon as it is received,
+			// the resolving process contains multiple lstat() syscalls,
+			// which is very slow on EFS.
+			path, err := resolveSymlinks(path)
+			if err != nil {
+				return err
+			}
 			return os.Remove(path)
 		}
 		return err
@@ -435,7 +492,6 @@ func (t *dirTree) delete(recursive bool) (bool, error) {
 
 	eg := &errgroup.Group{}
 	for _, n := range names {
-		n := n
 		eg.Go(func() error {
 			if d, ok := t.childDirs[n]; ok {
 				succeeded, err := d.delete(true)
@@ -628,6 +684,12 @@ func concurrentRemove(path string, recursive bool) error {
 	}
 
 	if !fi.IsDir() || !recursive {
+		// The path might contain symbolic links. In that case, it is the target file
+		// that must be removed.
+		path, err := resolveSymlinks(path)
+		if err != nil {
+			return err
+		}
 		return os.Remove(path)
 	}
 
@@ -654,7 +716,22 @@ func concurrentRemove(path string, recursive bool) error {
 		return err
 	}
 
-	return os.Remove(path)
+	{
+		// The path might contain symbolic links. In that case, it is the target file
+		// that must be removed.
+		path, err := resolveSymlinks(path)
+		if err != nil {
+			return err
+		}
+
+		if err := os.Remove(path); err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		return nil
+	}
 }
 
 func (s *session) delete(path string, recursive bool) (bool, error) {
@@ -839,13 +916,11 @@ func (s *session) copyFile(srcPath, destPath string, perm *os.FileMode) (string,
 		return valFalse, err
 	}
 	defer func() {
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
+		s.wg.Go(func() {
 			if err := src.Close(); err != nil {
 				log.Errorf("failed to close: %s", srcPath)
 			}
-		}()
+		})
 	}()
 
 	dest, err := s.createDest(destPath, perm)
@@ -853,13 +928,11 @@ func (s *session) copyFile(srcPath, destPath string, perm *os.FileMode) (string,
 		return valFalse, err
 	}
 	defer func() {
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
+		s.wg.Go(func() {
 			if err := dest.Close(); err != nil {
 				log.Errorf("failed to close: %s", destPath)
 			}
-		}()
+		})
 	}()
 
 	destStat, err := dest.Stat()
@@ -928,13 +1001,11 @@ func (s *session) createFile(content []byte, destPath string, perm *os.FileMode)
 		return valFalse, err
 	}
 	defer func() {
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
+		s.wg.Go(func() {
 			if err := dest.Close(); err != nil {
 				log.Errorf("failed to close: %s", destPath)
 			}
-		}()
+		})
 	}()
 
 	destStat, err := dest.Stat()

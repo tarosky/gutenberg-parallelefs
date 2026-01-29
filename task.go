@@ -67,17 +67,7 @@ func (f *speculativeFile) disposeUnused() error {
 	}
 
 	if fut.isNew {
-		// The path might contain symbolic links. In that case, it is the target file
-		// that must be removed.
-		//
-		// While the safest approach is to resolve the path as soon as it is received,
-		// the resolving process contains multiple lstat() syscalls,
-		// which is very slow on EFS.
-		path, err := resolveSymlinks(fut.file.Name())
-		if err != nil {
-			return err
-		}
-		if err := os.Remove(path); err != nil {
+		if err := os.Remove(fut.file.Name()); err != nil {
 			return err
 		}
 	}
@@ -104,28 +94,6 @@ func newDirTree(name string, parent *dirTree, speculative bool) *dirTree {
 	}
 }
 
-func followLastSymlink(path string) (string, error) {
-	lstat, err := os.Lstat(path)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return "", err
-		}
-
-		return path, nil
-	}
-
-	if isSymlink(lstat) {
-		path, err := resolveSymlinks(path)
-		if err != nil {
-			return "", err
-		}
-
-		return path, nil
-	}
-
-	return path, nil
-}
-
 func createDirTree(parent *dirTree, name string, speculate bool) (*dirTree, error) {
 	path := parent.getPath() + "/" + name
 	stat, err := os.Stat(path)
@@ -139,11 +107,6 @@ func createDirTree(parent *dirTree, name string, speculate bool) (*dirTree, erro
 	}
 
 	if !os.IsNotExist(err) {
-		return nil, err
-	}
-
-	path, err = followLastSymlink(path)
-	if err != nil {
 		return nil, err
 	}
 
@@ -293,11 +256,6 @@ func (t *dirTree) mkDirInternal(dirParts []string, perm *os.FileMode) error {
 			newPerm = *perm
 		}
 
-		path, err := followLastSymlink(path)
-		if err != nil {
-			return err
-		}
-
 		if err := os.Mkdir(path, newPerm); err != nil {
 			return err
 		}
@@ -364,16 +322,6 @@ func (t *dirTree) clean() error {
 
 	if _, err := dir.Readdirnames(1); err != nil {
 		if err == io.EOF {
-			// The path might contain symbolic links. In that case, it is the target dir
-			// that must be removed.
-			//
-			// While the safest approach is to resolve the path as soon as it is received,
-			// the resolving process contains multiple lstat() syscalls,
-			// which is very slow on EFS.
-			path, err := resolveSymlinks(path)
-			if err != nil {
-				return err
-			}
 			return os.Remove(path)
 		}
 		return err
@@ -684,12 +632,6 @@ func concurrentRemove(path string, recursive bool) error {
 	}
 
 	if !fi.IsDir() || !recursive {
-		// The path might contain symbolic links. In that case, it is the target file
-		// that must be removed.
-		path, err := resolveSymlinks(path)
-		if err != nil {
-			return err
-		}
 		return os.Remove(path)
 	}
 
@@ -716,22 +658,14 @@ func concurrentRemove(path string, recursive bool) error {
 		return err
 	}
 
-	{
-		// The path might contain symbolic links. In that case, it is the target file
-		// that must be removed.
-		path, err := resolveSymlinks(path)
-		if err != nil {
-			return err
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
 		}
-
-		if err := os.Remove(path); err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-		return nil
+		return err
 	}
+
+	return nil
 }
 
 func (s *session) delete(path string, recursive bool) (bool, error) {
